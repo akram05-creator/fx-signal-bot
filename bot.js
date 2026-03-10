@@ -219,6 +219,7 @@ const CANDLE_MS  = 2 * 60 * 60 * 1000; // refresh candles every 2h
 
 // ─── State ──────────────────────────────────────────────────
 const prices     = {};
+const prevPrices = {};
 const prevClose  = {};
 const candles    = {};
 const liveCandle = {};
@@ -457,7 +458,24 @@ async function fetchPrices() {
       }
     }
     log(`✅ Prices: ${Object.keys(prices).map(k => `${k}=${prices[k]}`).join(' | ')}`);
-  } catch (e) {
+
+    // Save prices f Supabase Bach Vercel y9rahom (0 Twelve Data req mn Vercel)
+    const priceUpdates = Object.entries(prices).map(([pair, price]) => {
+      const prev = prevPrices[pair] || price;
+      const change_pct = prev ? parseFloat(((price - prev) / prev * 100).toFixed(4)) : 0;
+      return fetch(`${SB_URL}/rest/v1/prices?pair=eq.${pair}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SB_KEY,
+          'Authorization': `Bearer ${SB_KEY}`
+        },
+        body: JSON.stringify({ price, change_pct, updated_at: new Date().toISOString() })
+      });
+    });
+    await Promise.all(priceUpdates);
+    // Save prev prices for change_pct
+    Object.assign(prevPrices, prices);
     log(`⚠️ fetchPrices error: ${e.message}`);
   }
 }
