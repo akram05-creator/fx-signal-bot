@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "FX Signal Pro — 24/7 Telegram Bot",
   "main": "bot.js",
+  "type": "module",
   "scripts": {
     "start": "node bot.js"
   },
