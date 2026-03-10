@@ -539,8 +539,10 @@ async function fetchAllCandles() {
 // ─── Economic Calendar ──────────────────────────────────────
 async function fetchCalendar() {
   try {
+    // Railway = server-side — direct fetch mashi bloqué ✅
     const url = `https://nfs.faireconomy.media/ff_calendar_thisweek.json`;
     const res  = await fetch(url);
+    if(!res.ok) throw new Error('HTTP '+res.status);
     const data = await res.json();
     const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     calEvents = data.filter(e => {
@@ -554,6 +556,32 @@ async function fetchCalendar() {
       return diff > -15 * 60000 && diff < 30 * 60000;
     });
     log(`📅 Calendar: ${calEvents.length} events today — blocked: ${calBlocked}`);
+
+    // Save f Supabase bach Vercel y9ra (mashi bloqué f browser) ✅
+    try{
+      // Clear today's events first
+      const todayISO = new Date().toISOString().split('T')[0];
+      await fetch(`${SB_URL}/rest/v1/calendar?event_time=gte.${todayISO}T00:00:00Z&event_time=lte.${todayISO}T23:59:59Z`, {
+        method: 'DELETE',
+        headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
+      });
+      // Insert new events
+      if(calEvents.length){
+        await fetch(`${SB_URL}/rest/v1/calendar`, {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json','apikey':SB_KEY,'Authorization':`Bearer ${SB_KEY}`,'Prefer':'return=minimal' },
+          body: JSON.stringify(calEvents.map(e => ({
+            event_time: new Date(e.date).toISOString(),
+            currency: e.currency,
+            title: e.title,
+            impact: e.impact,
+            updated_at: new Date().toISOString()
+          })))
+        });
+        log(`✅ Calendar saved to DB: ${calEvents.length} events`);
+      }
+    }catch(dbErr){ log(`⚠️ Calendar DB save: ${dbErr.message}`); }
+
   } catch (e) {
     log(`⚠️ Calendar: ${e.message}`);
   }
