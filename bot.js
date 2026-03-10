@@ -434,8 +434,8 @@ let dayStats = { signals:0, tp1:0, tp2:0, tp3:0, sl:0, date:'' };
 
 function getSession() {
   const h = new Date().getUTCHours();
-  if(h >= 7  && h < 12) return '🇬🇧 London';
-  if(h >= 12 && h < 17) return '🔀 London+NY Overlap';
+  if(h >= 8  && h < 13) return '🇬🇧 London';
+  if(h >= 13 && h < 17) return '🔀 London+NY Overlap';
   if(h >= 17 && h < 21) return '🇺🇸 New York';
   return '🌏 Asian';
 }
@@ -1192,7 +1192,12 @@ Reply ONLY in raw JSON no markdown:
     const clean = raw.replace(/```json|```/g, '').trim();
     const r    = JSON.parse(clean);
 
-    // Override SL/TP avec niveaux structurés (S/R réels)
+    log(`🤖 AI: ${r.signal} | conf: ${r.confidence}% | ${r.raisonnement?.substring(0, 80)}...`);
+
+    const isBuy  = r.signal === 'BUY';
+    const isSell = r.signal === 'SELL';
+
+    // Override SL/TP avec niveaux structurés (S/R réels) — after isBuy/isSell declaration
     if(t.structuredLevels && (isBuy||isSell)){
       const sl = t.structuredLevels;
       if(!parseFloat(r.sl) || !parseFloat(r.tp1)){
@@ -1203,11 +1208,6 @@ Reply ONLY in raw JSON no markdown:
         if(aiRR < 1.5) r.tp1 = sl.tp1;
       }
     }
-
-    log(`🤖 AI: ${r.signal} | conf: ${r.confidence}% | ${r.raisonnement?.substring(0, 80)}...`);
-
-    const isBuy  = r.signal === 'BUY';
-    const isSell = r.signal === 'SELL';
 
     // Hard gate
     const bullC = [t.srDir, t.emaDir, t.rsiDir, t.ictDir].filter(d => d === 'haussier').length;
@@ -1229,7 +1229,7 @@ Reply ONLY in raw JSON no markdown:
   }
 }
 
-// ─── Main Loop ──────────────────────────────────────────────
+// ─── Daily Briefing ─────────────────────────────────────────
 async function sendDailyBriefing() {
   try {
     // Fetch calendar fresh
