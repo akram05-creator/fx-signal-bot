@@ -1,8 +1,9 @@
 // ============================================================
 // FX Signal Pro — 24/7 Trading Bot
-// Railway / Render — Node.js
+// Railway / Render — Node.js 18+ (built-in fetch)
 // ============================================================
-import fetch from 'node-fetch';
+
+// Node 18+ has built-in fetch — no dependencies needed!
 
 // ─── Config ─────────────────────────────────────────────────
 const TD_KEY   = process.env.TD_KEY   || '2dfb3a0242474809967353a965e730f1';
@@ -556,9 +557,9 @@ async function init() {
   log('✅ Bot running — waiting for signals...');
 }
 
-// Keep-alive for Railway/Render (they sleep on inactivity)
-import http from 'http';
-http.createServer((req, res) => {
+// Keep-alive server for Railway/Render
+import { createServer } from 'http';
+createServer((req, res) => {
   res.writeHead(200);
   res.end('FX Signal Pro Bot — Running ✅');
 }).listen(process.env.PORT || 3000);
