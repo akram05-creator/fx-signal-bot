@@ -476,6 +476,7 @@ async function fetchPrices() {
     await Promise.all(priceUpdates);
     // Save prev prices for change_pct
     Object.assign(prevPrices, prices);
+  } catch(e) {
     log(`⚠️ fetchPrices error: ${e.message}`);
   }
 }
