@@ -14,6 +14,195 @@ const POLY_KEY = process.env.POLY_KEY || 'Vxe1pa2pDsqR2wt5XguyxYOH68DwTiKi';
 const GROQ_KEY = process.env.GROQ_KEY || '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';
 const TG_TOKEN = process.env.TG_TOKEN || '8427595283:AAFaoATV4Cq-45Fq_eruMLRFaJsOrCt6Ceo';
 const TG_CHAT  = process.env.TG_CHAT  || '-1003612566723';
+const SB_URL   = process.env.SUPABASE_URL || 'https://ugbowhydxxkpsamjxxai.supabase.co';
+const SB_KEY   = process.env.SUPABASE_KEY || 'sb_publishable_I1wxgYYVPxo9PXhmBxpG5A_dYR2nsi9';
+
+// ─── Supabase DB ─────────────────────────────────────────────
+async function dbInsert(table, data){
+  try{
+    const res = await fetch(`${SB_URL}/rest/v1/${table}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SB_KEY,
+        'Authorization': `Bearer ${SB_KEY}`,
+        'Prefer': 'return=representation'
+      },
+      body: JSON.stringify(data)
+    });
+    const result = await res.json();
+    if(!res.ok) throw new Error(JSON.stringify(result));
+    return Array.isArray(result) ? result[0] : result;
+  }catch(e){
+    log(`⚠️ DB insert ${table}: ${e.message}`);
+    return null;
+  }
+}
+
+async function dbUpdate(table, match, data){
+  try{
+    const params = Object.entries(match).map(([k,v])=>`${k}=eq.${v}`).join('&');
+    const res = await fetch(`${SB_URL}/rest/v1/${table}?${params}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SB_KEY,
+        'Authorization': `Bearer ${SB_KEY}`
+      },
+      body: JSON.stringify(data)
+    });
+    if(!res.ok){ const e = await res.json(); throw new Error(JSON.stringify(e)); }
+    log(`✅ DB update ${table}`);
+  }catch(e){
+    log(`⚠️ DB update ${table}: ${e.message}`);
+  }
+}
+
+async function dbSelect(table, params=''){
+  try{
+    const res = await fetch(`${SB_URL}/rest/v1/${table}?${params}`, {
+      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
+    });
+    return await res.json();
+  }catch(e){
+    log(`⚠️ DB select ${table}: ${e.message}`);
+    return [];
+  }
+}
+
+// Save signal + trade to DB
+async function saveSignalToDB(sigKey, pair, price, dec, conf, score, r, session){
+  try{
+    // 1 — Save signal
+    const signal = await dbInsert('signals', {
+      pair, signal: sigKey,
+      entry: parseFloat(price),
+      sl:    parseFloat(r.sl)  || 0,
+      tp1:   parseFloat(r.tp1) || 0,
+      tp2:   parseFloat(r.tp2) || 0,
+      tp3:   parseFloat(r.tp3) || 0,
+      trailing_sl: parseFloat(r.trailing_sl) || 0,
+      score, confidence: conf,
+      raisonnement: r.raisonnement || '',
+      analysis: r.analyse || r.analysis || '',
+      session
+    });
+    if(!signal?.id){ log('⚠️ Signal not saved'); return null; }
+    log(`✅ DB signal saved: ${signal.id}`);
+
+    // 2 — Save trade
+    const trade = await dbInsert('trades', {
+      signal_id: signal.id,
+      pair, signal: sigKey,
+      entry: parseFloat(price),
+      sl:    parseFloat(r.sl)  || 0,
+      tp1:   parseFloat(r.tp1) || 0,
+      tp2:   parseFloat(r.tp2) || 0,
+      tp3:   parseFloat(r.tp3) || 0,
+      status: 'active'
+    });
+    if(trade?.id) log(`✅ DB trade saved: ${trade.id}`);
+
+    // 3 — Update win_rate total
+    const wr = await dbSelect('win_rate', 'id=eq.1');
+    const current = wr[0] || {};
+    await dbUpdate('win_rate', {id:1}, {
+      total_signals: (current.total_signals||0) + 1,
+      updated_at: new Date().toISOString()
+    });
+
+    return signal.id;
+  }catch(e){
+    log(`⚠️ saveSignalToDB: ${e.message}`);
+    return null;
+  }
+}
+
+// Update active trades P&L + check TP/SL hits
+async function updateActiveTrades(){
+  try{
+    const trades = await dbSelect('trades', 'status=eq.active');
+    if(!trades?.length) return;
+
+    for(const trade of trades){
+      const price = prices[Object.keys(prices).find(k => {
+        const p = PAIRS.find(x=>x.key===k);
+        return p?.label === trade.pair;
+      })];
+      if(!price) continue;
+
+      const isBuy = trade.signal === 'BUY';
+      const entry = parseFloat(trade.entry);
+      const pnl   = isBuy ? ((price-entry)/entry)*100 : ((entry-price)/entry)*100;
+
+      const updates = { pnl_pct: parseFloat(pnl.toFixed(3)) };
+
+      // Check TP/SL hits
+      if(!trade.tp1_hit && parseFloat(trade.tp1)>0){
+        if((isBuy && price >= trade.tp1) || (!isBuy && price <= trade.tp1)){
+          updates.tp1_hit = true;
+          log(`🎯 TP1 hit: ${trade.pair}`);
+        }
+      }
+      if(!trade.tp2_hit && parseFloat(trade.tp2)>0){
+        if((isBuy && price >= trade.tp2) || (!isBuy && price <= trade.tp2)){
+          updates.tp2_hit = true;
+          log(`🎯 TP2 hit: ${trade.pair}`);
+        }
+      }
+      if(!trade.tp3_hit && parseFloat(trade.tp3)>0){
+        if((isBuy && price >= trade.tp3) || (!isBuy && price <= trade.tp3)){
+          updates.tp3_hit = true;
+          updates.status = 'closed';
+          updates.closed_at = new Date().toISOString();
+          log(`🎯 TP3 hit — trade closed: ${trade.pair}`);
+          await updateWinRate(true, trade.user_entered);
+          await sendTelegramMsg(`🎯 <b>TP3 HIT — TRADE CLOSED</b>\n${trade.pair} ${trade.signal}\nP&L: +${pnl.toFixed(2)}% ✅`);
+        }
+      }
+      if(!trade.sl_hit && parseFloat(trade.sl)>0){
+        if((isBuy && price <= trade.sl) || (!isBuy && price >= trade.sl)){
+          updates.sl_hit = true;
+          updates.status = 'closed';
+          updates.closed_at = new Date().toISOString();
+          log(`🛑 SL hit — trade closed: ${trade.pair}`);
+          await updateWinRate(false, trade.user_entered);
+          await sendTelegramMsg(`🛑 <b>SL HIT — TRADE CLOSED</b>\n${trade.pair} ${trade.signal}\nP&L: ${pnl.toFixed(2)}% ❌`);
+        }
+      }
+
+      await dbUpdate('trades', {id: trade.id}, updates);
+    }
+  }catch(e){
+    log(`⚠️ updateActiveTrades: ${e.message}`);
+  }
+}
+
+async function updateWinRate(isWin, userEntered){
+  const wr = await dbSelect('win_rate','id=eq.1');
+  const c  = wr[0] || {};
+  const updates = {
+    total_wins:   (c.total_wins||0)   + (isWin?1:0),
+    total_losses: (c.total_losses||0) + (isWin?0:1),
+    updated_at: new Date().toISOString()
+  };
+  if(userEntered){
+    updates.user_wins   = (c.user_wins||0)   + (isWin?1:0);
+    updates.user_losses = (c.user_losses||0) + (isWin?0:1);
+    updates.user_total  = (c.user_total||0)  + 1;
+  }
+  await dbUpdate('win_rate', {id:1}, updates);
+}
+
+async function sendTelegramMsg(text){
+  try{
+    await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({chat_id:TG_CHAT, text, parse_mode:'HTML', disable_web_page_preview:true})
+    });
+  }catch(e){ log(`⚠️ TG msg: ${e.message}`); }
+}
 
 const PAIRS = [
   { key:'EURUSD', label:'EUR/USD', dec:5, pip:0.0001 },
@@ -517,8 +706,8 @@ Reply ONLY in raw JSON no markdown:
     // Only send if signal changed
     if (lastSig[best.key] === sigKey) { log(`→ Same signal as last time — skip`); return; }
     lastSig[best.key] = sigKey;
-
     await sendTelegram(sigKey, best.label, t.price, best.dec, r.confidence, t.totalScore, r);
+    await saveSignalToDB(sigKey, best.label, t.price, best.dec, r.confidence, t.totalScore, r, session);
 
   } catch (e) {
     log(`⚠️ AI scan error: ${e.message}`);
@@ -547,6 +736,9 @@ async function init() {
 
   // Scan loop — kol 60s
   setInterval(runScan, SCAN_SECS * 1000);
+
+  // Update active trades P&L + TP/SL — kol 60s
+  setInterval(updateActiveTrades, 60 * 1000);
 
   // Candle refresh — kol 2h
   setInterval(fetchAllCandles, CANDLE_MS);
