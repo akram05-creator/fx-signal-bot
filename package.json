@@ -7,9 +7,6 @@
   "scripts": {
     "start": "node bot.js"
   },
-  "dependencies": {
-    "node-fetch": "^3.3.2"
-  },
   "engines": {
     "node": ">=18"
   }
