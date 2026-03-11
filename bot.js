@@ -1484,10 +1484,15 @@ function scheduleDailyBriefing() {
 // ─── Main Loop ──────────────────────────────────────────────
 async function init() {
   log('🚀 FX Signal Pro Bot starting...');
-  await sendTelegram('INFO', 'BOT', 0, 2, 100, 100, {
-    signal: 'INFO',
-    raisonnement: '🤖 FX Signal Pro Bot started — scanning 8h-21h UTC',
-    analyse: 'Active pairs: EUR/USD, GBP/USD, XAU/USD, USD/JPY',
+  await sendTelegramMsg(
+`🤖 <b>FX Signal Pro Bot — ONLINE</b>
+━━━━━━━━━━━━━━━━━━━
+✅ Bot démarré — scan actif 8h-21h UTC
+📊 Paires: EUR/USD • GBP/USD • XAU/USD • USD/JPY
+⏰ Sessions: London • NY • Overlap
+━━━━━━━━━━━━━━━━━━━
+🔍 En attente de setup...
+#FXSignalPro`
   }).catch(() => {});
 
   // Initial candle load
