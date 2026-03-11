@@ -378,7 +378,23 @@ ${sig} ${trade.pair}
 #AIUpdate #TradeManagement`, trade.tg_message_id||null);
           }
         } else {
-          log(`→ HOLD — no alert sent`);
+          // HOLD — send update to Telegram
+          const tpsHit = [trade.tp1_hit,trade.tp2_hit,trade.tp3_hit].filter(Boolean).length;
+          const pnlEmoji = parseFloat(pnlR)>=0 ? '📈' : '📉';
+          await sendTelegramMsg(
+`🤖 <b>AI TRADE UPDATE — HOLD</b>
+━━━━━━━━━━━━━━━━━━━
+${sig} ${trade.pair}
+📌 Entry: <code>${fmt(entry)}</code> | Now: <code>${fmt(price)}</code>
+${pnlEmoji} P&L: ${parseFloat(pnlR)>=0?'+':''}${pnlR}R
+🛑 SL: <code>${fmt(sl)}</code>
+🎯 TPs atteints: ${tpsHit}/3
+
+✅ <b>HOLD — Tenir la position</b>
+📝 "${r.reason}"
+━━━━━━━━━━━━━━━━━━━
+#AIUpdate #Hold`, trade.tg_message_id||null);
+          log(`→ HOLD — alert sent`);
         }
 
       }catch(aiErr){
@@ -1262,17 +1278,12 @@ async function runScan() {
   if (!isBull15 && !isBear15) { log('→ WAIT: no clear direction'); return; }
   if (t.totalScore < 50)      { log(`→ WAIT: score ${t.totalScore} < 50`); return; }
 
-  // Moderate track (50-65) — AI validates harder before sending
-  const isModerate = t.totalScore >= 50 && t.totalScore < 65;
-
   const session = getSession();
   const newsContext = calEvents.length
     ? calEvents.slice(0, 5).map(e => `${e.impact === 'High' ? '🔴' : e.impact === 'Medium' ? '🟡' : '🟢'} ${e.currency} ${e.title} @ ${new Date(e.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`).join('\n')
     : 'No major news today';
 
-  const prompt = `You are a senior forex trader with 15 years experience. Analyze like a real trader — think and decide.
-
-SETUP QUALITY: ${isModerate ? '⚠️ MODERATE (score 50-65) — Be EXTRA strict. Only validate if setup is genuinely good despite lower score. Prefer WAIT if any doubt.' : '✅ HIGH CONFIDENCE (score 65+) — Validate if direction is clear.'}
+  const prompt = `You are a senior forex trader with 15 years experience. You are the SOLE decision maker — think and decide like a real trader, not a mechanical system.
 
 TRADING STYLE: Daily bias → 1H confirmation → 15m entry. Intraday: 30min-4h max. Tight SL on structure. Min RR 1.5.
 
@@ -1324,7 +1335,12 @@ ICT/SMC: BOS bull: ${t.bos_bull} | BOS bear: ${t.bos_bear} | FVG bull: ${t.fvg_b
 SCORES: S&R: ${t.srScore}/25 (${t.srDir}) | EMA: ${t.emaScore}/25 (${t.emaDir}) | RSI: ${t.rsiScore}/25 (${t.rsiDir}) | ICT: ${t.ictScore}/25 (${t.ictDir})
 Total: ${t.totalScore}/100
 
-MINIMUM TO ENTER: Clear 4H bias + 1H confirms + 15m trigger (BOS or EMA cross) + Active session + No HIGH IMPACT news in 30min + RR >= 1.5. If ANY missing → WAIT.
+YOUR JUDGMENT AS A TRADER — YOU ARE THE SOLE DECISION MAKER:
+- You can BUY/SELL even with only 2 strategies aligned IF the setup is clear
+- You can BUY/SELL even with score < 65 IF you see a genuine opportunity
+- You can WAIT even with score 90 IF the context doesn't feel right
+- Key: clear setup + logical SL + RR >= 1.5
+- WAIT only if: no visible setup, full range market, or HIGH IMPACT news imminent
 
 SL: use nearest 15m swing high/low (not fixed formula).
 TPs: based on real S&R levels.
@@ -1394,19 +1410,11 @@ Reply ONLY in raw JSON no markdown:
       }
     }
 
-    // Hard gate
-    const bullC = [t.srDir, t.emaDir, t.rsiDir, t.ictDir].filter(d => d === 'haussier').length;
-    const bearC = [t.srDir, t.emaDir, t.rsiDir, t.ictDir].filter(d => d === 'baissier').length;
+    // AI est le seul décideur — pas de hard gate
+    // Si AI dit BUY/SELL → on envoie. Si AI dit WAIT → on skip.
+    if (!isBuy && !isSell) { log(`→ AI dit WAIT — skip`); return; }
 
-    // Moderate track: AI must say BUY/SELL (not WAIT) — no strict count needed
-    // High track: standard hard gate bullC/bearC >= 3 + score >= 65
-    const validHigh     = (isBuy && bullC >= 3 && t.totalScore >= 65) || (isSell && bearC >= 3 && t.totalScore >= 65);
-    const validModerate = isModerate && (isBuy || isSell); // AI already decided
-    const valid = validHigh || validModerate;
-
-    if (!valid) { log(`→ Hard gate blocked: bull=${bullC} bear=${bearC} score=${t.totalScore}`); return; }
-
-    // Probability label
+    // Probability label basé sur score (info seulement)
     const probLabel = t.totalScore >= 80 ? '🔥 SUPER HIGH PROBABILITY'
                     : t.totalScore >= 65 ? '📊 HIGH PROBABILITY'
                     : '⚠️ MODERATE PROBABILITY';
