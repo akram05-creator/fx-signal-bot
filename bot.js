@@ -1171,6 +1171,33 @@ async function sendTelegram(sigKey, pair, price, dec, conf, score, r, probLabel=
     const sess   = getSession();
     const now    = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Casablanca' });
 
+    // ── Lot Calculator ──
+    // Pip value USD account (standard lot = 100k)
+    // EUR/USD GBP/USD = 0/pip | XAU/USD = 0/0.10move | USD/JPY ≈ 0/pip
+    const pipValueMap = { 'EUR/USD': 10, 'GBP/USD': 10, 'XAU/USD': 10, 'USD/JPY': 10 };
+    const pipValue = pipValueMap[pair] || 10;
+    // SL distance in pips
+    const slPips = r.sl && price ? (
+      pair === 'XAU/USD'
+        ? Math.abs(price - parseFloat(r.sl)) / 0.10          // XAU: 0.10 = 1 pip
+        : dec === 3
+        ? Math.abs(price - parseFloat(r.sl)) / 0.01          // JPY
+        : Math.abs(price - parseFloat(r.sl)) / 0.0001        // EUR GBP
+    ) : 0;
+    const calcLots = (riskUSD) => {
+      if(!slPips || slPips <= 0) return '—';
+      const lots = riskUSD / (slPips * pipValue);
+      return lots.toFixed(2);
+    };
+    const slPipsDisplay = slPips > 0 ? slPips.toFixed(1) : '—';
+    const lotCalc = slPips > 0 ? `
+💰 <b>RISK CALCULATOR</b> <i>(SL = ${slPipsDisplay} pips)</i>
+  Risk $50   → <code>${calcLots(50)} lots</code>
+  Risk $100  → <code>${calcLots(100)} lots</code>
+  Risk $200  → <code>${calcLots(200)} lots</code>
+  Risk $500  → <code>${calcLots(500)} lots</code>
+━━━━━━━━━━━━━━━━━` : '';
+
     const text =
 `${arrow} <b>FX SIGNAL PRO</b> ${arrow}
 ━━━━━━━━━━━━━━━━━
@@ -1185,7 +1212,7 @@ ${probLabel}
 🎯 <b>TP3:</b>    <code>${fmt(r.tp3)}</code>  <i>(25% — 2-4h)</i>
 ━━━━━━━━━━━━━━━━━
 📊 <b>Score:</b> ${score}/100 | <b>RR:</b> ${rr} | <b>Conf:</b> ${conf}%
-━━━━━━━━━━━━━━━━━
+${lotCalc}
 🧠 <b>Analysis:</b>
 <i>${(r.raisonnement || r.analyse || '—').substring(0, 400)}</i>
 ━━━━━━━━━━━━━━━━━
