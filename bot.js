@@ -254,7 +254,7 @@ async function analyzeActiveTrades(){
       // Only analyze every 30min per trade
       const now = Date.now();
       const last = lastTradeAnalysis[trade.id] || 0;
-      if(now - last < 30*60*1000) continue;
+      if(now - last < 5*60*1000) continue;
       lastTradeAnalysis[trade.id] = now;
 
       const pair = PAIRS.find(p=>p.label===trade.pair);
@@ -319,7 +319,24 @@ Rules:
         const data = await res.json();
         const raw  = data.choices?.[0]?.message?.content||'';
         const clean = raw.replace(/```json|```/g,'').trim();
-        const r = JSON.parse(clean);
+        let r;
+        try {
+          r = JSON.parse(clean);
+        } catch {
+          const match = clean.match(/\{[\s\S]*\}/);
+          if(match) {
+            try{ r = JSON.parse(match[0]); }
+            catch{
+              log(`⚠️ Trade AI non-JSON [${trade.pair}] — silent retry in 2min`);
+              setTimeout(() => { delete lastTradeAnalysis[trade.id]; }, 2*60*1000);
+              continue;
+            }
+          } else {
+            log(`⚠️ Trade AI non-JSON [${trade.pair}] — silent retry in 2min`);
+            setTimeout(() => { delete lastTradeAnalysis[trade.id]; }, 2*60*1000);
+            continue;
+          }
+        }
 
         log(`🤖 Trade AI [${trade.pair}]: ${r.action} — ${r.reason}`);
 
@@ -566,6 +583,9 @@ ${perf}` : `😴 Aucun signal aujourd'hui — marché en range`}
 
     await sendTelegramMsg(msg);
     log(`✅ End of day summary sent — ${total} trades | ${rrStr}`);
+
+    // Reset lastSig — signals jdad nhar jdid ✅
+    lastSig = {};
     lastSession = '';
   } catch(e) {
     log(`⚠️ EOD summary: ${e.message}`);
@@ -583,6 +603,124 @@ function scheduleEndOfDay() {
   setTimeout(async () => {
     await sendEndOfDaySummary();
     setInterval(sendEndOfDaySummary, 24*60*60*1000);
+  }, msUntil);
+}
+
+// Weekly Report — every Friday at 21h00 UTC (23h Maroc)
+async function sendWeeklyReport() {
+  try {
+    // Get trades from last 7 days
+    const fromISO = new Date(Date.now() - 7*24*60*60*1000).toISOString();
+    const trades  = await dbSelect('trades',
+      `created_at=gte.${fromISO}&order=created_at.asc`
+    );
+
+    const total   = trades.length;
+    const tp1hits = trades.filter(t=>t.tp1_hit).length;
+    const tp2hits = trades.filter(t=>t.tp2_hit).length;
+    const tp3hits = trades.filter(t=>t.tp3_hit).length;
+    const slhits  = trades.filter(t=>t.sl_hit).length;
+    const be      = trades.filter(t=>!t.tp1_hit&&!t.sl_hit&&t.status==='closed').length;
+    const wins    = trades.filter(t=>t.tp1_hit||t.tp2_hit||t.tp3_hit).length;
+    const wr      = total > 0 ? Math.round((wins/total)*100) : 0;
+
+    // Group by day
+    const byDay = {};
+    for(const t of trades){
+      const day = new Date(t.created_at).toLocaleDateString('fr-FR', {
+        weekday:'long', day:'numeric', month:'long', timeZone:'Africa/Casablanca'
+      });
+      if(!byDay[day]) byDay[day] = [];
+      byDay[day].push(t);
+    }
+
+    // P&L per day + total
+    let totalRR = 0;
+    const dayLines = Object.entries(byDay).map(([day, dayTrades]) => {
+      let dayRR = 0;
+      const lines = dayTrades.map(t => {
+        const entry  = parseFloat(t.entry);
+        const sl     = parseFloat(t.sl);
+        const tp1    = parseFloat(t.tp1);
+        const tp2    = parseFloat(t.tp2);
+        const tp3    = parseFloat(t.tp3);
+        const slDist = Math.abs(entry-sl);
+        let rr = 0;
+        if(t.sl_hit)      rr = -1;
+        else if(t.tp3_hit) rr = (Math.abs(tp1-entry)/slDist)*0.40 + (Math.abs(tp2-entry)/slDist)*0.35 + (Math.abs(tp3-entry)/slDist)*0.25;
+        else if(t.tp2_hit) rr = (Math.abs(tp1-entry)/slDist)*0.40 + (Math.abs(tp2-entry)/slDist)*0.35;
+        else if(t.tp1_hit) rr = (Math.abs(tp1-entry)/slDist)*0.40;
+        if(slDist) dayRR += rr;
+
+        const sig    = t.signal==='BUY'?'🟢':'🔴';
+        let result   = t.sl_hit ? 'SL ❌' : t.tp3_hit ? 'TP1✅TP2✅TP3✅' : t.tp2_hit ? 'TP1✅TP2✅' : t.tp1_hit ? 'TP1✅' : t.status==='closed' ? 'BE➡️' : '⏳';
+        return `    ${sig} ${t.pair} → ${result}`;
+      }).join('\n');
+
+      totalRR += dayRR;
+      const rrStr = dayRR >= 0 ? `+${dayRR.toFixed(2)}R` : `${dayRR.toFixed(2)}R`;
+      const dayWins = dayTrades.filter(t=>t.tp1_hit||t.tp2_hit||t.tp3_hit).length;
+      return `📅 <b>${day.charAt(0).toUpperCase()+day.slice(1)}</b> (${dayTrades.length} trades | ${rrStr})\n${lines}`;
+    }).join('\n\n');
+
+    const totalRRStr = totalRR >= 0 ? `+${totalRR.toFixed(2)}R` : `${totalRR.toFixed(2)}R`;
+    const perf = totalRR > 3  ? '🔥 Excellente semaine' :
+                 totalRR > 0  ? '✅ Semaine profitable' :
+                 totalRR === 0 ? '➡️ Semaine neutre (BE)' : '❌ Semaine difficile';
+
+    // Best pair
+    const pairStats = {};
+    for(const t of trades){
+      if(!pairStats[t.pair]) pairStats[t.pair] = { wins:0, total:0 };
+      pairStats[t.pair].total++;
+      if(t.tp1_hit||t.tp2_hit||t.tp3_hit) pairStats[t.pair].wins++;
+    }
+    const bestPair = Object.entries(pairStats)
+      .sort((a,b) => (b[1].wins/b[1].total) - (a[1].wins/a[1].total))[0];
+
+    const msg = `📊 <b>RAPPORT HEBDOMADAIRE — FX SIGNAL PRO</b>
+━━━━━━━━━━━━━━━━━━━
+🗓️ Semaine du ${new Date(Date.now()-6*24*60*60*1000).toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} au ${new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}
+
+${total > 0 ? `${dayLines}
+
+━━━━━━━━━━━━━━━━━━━
+📈 <b>RÉSUMÉ DE LA SEMAINE:</b>
+  Total signals: ${total}
+  ✅ Wins: ${wins} | ❌ Losses: ${slhits} | ➡️ BE: ${be}
+  📊 Win Rate: ${wr}%
+  🎯 TP1: ${tp1hits} | TP2: ${tp2hits} | TP3: ${tp3hits} | SL: ${slhits}
+
+💰 <b>P&amp;L total semaine: ${totalRRStr}</b>
+  (TP1×40% + TP2×35% + TP3×25%)
+${bestPair ? `\n🏆 Meilleure paire: ${bestPair[0]} (${Math.round(bestPair[1].wins/bestPair[1].total*100)}% WR)` : ''}
+
+${perf}` : `😴 Aucun signal cette semaine`}
+
+━━━━━━━━━━━━━━━━━━━
+📅 Prochain briefing lundi à 10h00 (Maroc)
+#WeeklyReport #FXSignalPro`;
+
+    await sendTelegramMsg(msg);
+    log(`✅ Weekly report sent — ${total} trades | ${totalRRStr}`);
+  } catch(e) {
+    log(`⚠️ Weekly report: ${e.message}`);
+  }
+}
+
+// Schedule weekly report — every Friday 21h UTC (23h Maroc)
+function scheduleWeeklyReport() {
+  const now  = new Date();
+  const next = new Date();
+  // Find next Friday 21h UTC
+  const daysUntilFriday = (5 - now.getUTCDay() + 7) % 7 || 7; // 5 = Friday
+  next.setUTCDate(now.getUTCDate() + (daysUntilFriday === 0 && now.getUTCHours() >= 21 ? 7 : daysUntilFriday));
+  next.setUTCHours(21, 0, 0, 0);
+  const msUntil = next.getTime() - now.getTime();
+  log(`📊 Weekly report scheduled in ${Math.round(msUntil/3600000)}h`);
+  setTimeout(async () => {
+    await sendWeeklyReport();
+    setInterval(sendWeeklyReport, 7*24*60*60*1000);
   }, msUntil);
 }
 
@@ -894,22 +1032,22 @@ async function fetchPrices() {
     }
     log(`✅ Prices: ${Object.keys(prices).map(k => `${k}=${prices[k]}`).join(' | ')}`);
 
-    // Save prices f Supabase Bach Vercel y9rahom (0 Twelve Data req mn Vercel)
+    // Save prices f Supabase — UPSERT (insert ola update automatique)
     const priceUpdates = Object.entries(prices).map(([pair, price]) => {
       const prev = prevPrices[pair] || price;
       const change_pct = prev ? parseFloat(((price - prev) / prev * 100).toFixed(4)) : 0;
-      return fetch(`${SB_URL}/rest/v1/prices?pair=eq.${pair}`, {
-        method: 'PATCH',
+      return fetch(`${SB_URL}/rest/v1/prices`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'apikey': SB_KEY,
-          'Authorization': `Bearer ${SB_KEY}`
+          'Authorization': `Bearer ${SB_KEY}`,
+          'Prefer': 'resolution=merge-duplicates,return=minimal'
         },
-        body: JSON.stringify({ price, change_pct, updated_at: new Date().toISOString() })
+        body: JSON.stringify({ pair, price, change_pct, updated_at: new Date().toISOString() })
       });
     });
     await Promise.all(priceUpdates);
-    // Save prev prices for change_pct
     Object.assign(prevPrices, prices);
   } catch(e) {
     log(`⚠️ fetchPrices error: ${e.message}`);
@@ -1023,7 +1161,7 @@ async function fetchCalendar() {
 }
 
 // ─── Telegram ───────────────────────────────────────────────
-async function sendTelegram(sigKey, pair, price, dec, conf, score, r) {
+async function sendTelegram(sigKey, pair, price, dec, conf, score, r, probLabel='📊 HIGH PROBABILITY') {
   try {
     const isBuy  = sigKey === 'BUY';
     const arrow  = isBuy ? '📈' : '📉';
@@ -1038,6 +1176,7 @@ async function sendTelegram(sigKey, pair, price, dec, conf, score, r) {
 ━━━━━━━━━━━━━━━━━
 <b>${action} — ${pair}</b>
 ⏰ ${now} Casablanca | ${sess}
+${probLabel}
 ━━━━━━━━━━━━━━━━━
 📌 <b>Entry:</b>  <code>${parseFloat(price).toFixed(dec)}</code>
 🛑 <b>SL:</b>     <code>${fmt(r.sl)}</code>
@@ -1094,7 +1233,10 @@ async function runScan() {
   const isBull15 = t.finalDir.includes('haussier');
   const isBear15 = t.finalDir.includes('baissier');
   if (!isBull15 && !isBear15) { log('→ WAIT: no clear direction'); return; }
-  if (t.totalScore < 65)      { log(`→ WAIT: score ${t.totalScore} < 65`); return; }
+  if (t.totalScore < 50)      { log(`→ WAIT: score ${t.totalScore} < 50`); return; }
+
+  // Moderate track (50-65) — AI validates harder before sending
+  const isModerate = t.totalScore >= 50 && t.totalScore < 65;
 
   const session = getSession();
   const newsContext = calEvents.length
@@ -1102,6 +1244,8 @@ async function runScan() {
     : 'No major news today';
 
   const prompt = `You are a senior forex trader with 15 years experience. Analyze like a real trader — think and decide.
+
+SETUP QUALITY: ${isModerate ? '⚠️ MODERATE (score 50-65) — Be EXTRA strict. Only validate if setup is genuinely good despite lower score. Prefer WAIT if any doubt.' : '✅ HIGH CONFIDENCE (score 65+) — Validate if direction is clear.'}
 
 TRADING STYLE: Daily bias → 1H confirmation → 15m entry. Intraday: 30min-4h max. Tight SL on structure. Min RR 1.5.
 
@@ -1190,7 +1334,21 @@ Reply ONLY in raw JSON no markdown:
     const data = await res.json();
     const raw  = data.choices?.[0]?.message?.content || '';
     const clean = raw.replace(/```json|```/g, '').trim();
-    const r    = JSON.parse(clean);
+
+    let r;
+    try {
+      r = JSON.parse(clean);
+    } catch(parseErr) {
+      // Try extract JSON from text
+      const match = clean.match(/\{[\s\S]*\}/);
+      if(match) {
+        try { r = JSON.parse(match[0]); }
+        catch { log(`⚠️ AI returned non-JSON — skipping scan`); return; }
+      } else {
+        log(`⚠️ AI returned non-JSON — skipping scan: ${clean.substring(0,100)}`);
+        return;
+      }
+    }
 
     log(`🤖 AI: ${r.signal} | conf: ${r.confidence}% | ${r.raisonnement?.substring(0, 80)}...`);
 
@@ -1212,16 +1370,26 @@ Reply ONLY in raw JSON no markdown:
     // Hard gate
     const bullC = [t.srDir, t.emaDir, t.rsiDir, t.ictDir].filter(d => d === 'haussier').length;
     const bearC = [t.srDir, t.emaDir, t.rsiDir, t.ictDir].filter(d => d === 'baissier').length;
-    const valid = (isBuy && bullC >= 3 && t.totalScore >= 65) || (isSell && bearC >= 3 && t.totalScore >= 65);
+
+    // Moderate track: AI must say BUY/SELL (not WAIT) — no strict count needed
+    // High track: standard hard gate bullC/bearC >= 3 + score >= 65
+    const validHigh     = (isBuy && bullC >= 3 && t.totalScore >= 65) || (isSell && bearC >= 3 && t.totalScore >= 65);
+    const validModerate = isModerate && (isBuy || isSell); // AI already decided
+    const valid = validHigh || validModerate;
 
     if (!valid) { log(`→ Hard gate blocked: bull=${bullC} bear=${bearC} score=${t.totalScore}`); return; }
+
+    // Probability label
+    const probLabel = t.totalScore >= 80 ? '🔥 SUPER HIGH PROBABILITY'
+                    : t.totalScore >= 65 ? '📊 HIGH PROBABILITY'
+                    : '⚠️ MODERATE PROBABILITY';
 
     const sigKey = isBuy ? 'BUY' : 'SELL';
 
     // Only send if signal changed
     if (lastSig[best.key] === sigKey) { log(`→ Same signal as last time — skip`); return; }
     lastSig[best.key] = sigKey;
-    const tgMsgId = await sendTelegram(sigKey, best.label, t.price, best.dec, r.confidence, t.totalScore, r);
+    const tgMsgId = await sendTelegram(sigKey, best.label, t.price, best.dec, r.confidence, t.totalScore, r, probLabel);
     await saveSignalToDB(sigKey, best.label, t.price, best.dec, r.confidence, t.totalScore, r, session, tgMsgId);
 
   } catch (e) {
@@ -1339,8 +1507,8 @@ async function init() {
   // Update active trades P&L + TP/SL — kol 60s
   setInterval(updateActiveTrades, 60 * 1000);
 
-  // AI trade analysis — kol 30min
-  setInterval(analyzeActiveTrades, 30 * 60 * 1000);
+  // AI trade analysis — kol 5min (msg ghir ki CLOSE/MOVE_SL)
+  setInterval(analyzeActiveTrades, 5 * 60 * 1000);
 
   // Candle refresh — kol 2h
   setInterval(fetchAllCandles, CANDLE_MS);
@@ -1353,6 +1521,9 @@ async function init() {
 
   // End of Day summary 21h UTC
   scheduleEndOfDay();
+
+  // Weekly report — Friday 21h UTC (23h Maroc)
+  scheduleWeeklyReport();
 
   // Session change check kol 60s
   setInterval(checkSessionChange, 60 * 1000);
