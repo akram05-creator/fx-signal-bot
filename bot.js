@@ -1493,7 +1493,7 @@ async function init() {
 ━━━━━━━━━━━━━━━━━━━
 🔍 En attente de setup...
 #FXSignalPro`
-  }).catch(() => {});
+  ).catch(() => {});
 
   // Initial candle load
   await fetchAllCandles();
