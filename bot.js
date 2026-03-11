@@ -152,6 +152,7 @@ async function updateActiveTrades(){
           await sendTelegramMsg(
 `🎯 <b>TP1 ATTEINT — SL → BREAKEVEN</b>
 ━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime()}
 ${sig} ${trade.pair}
 📌 Entry: <code>${fmt(entry)}</code>
 🎯 TP1: <code>${fmt(trade.tp1)}</code> ✅
@@ -171,6 +172,7 @@ ${sig} ${trade.pair}
           await sendTelegramMsg(
 `🎯 <b>TP2 ATTEINT — SL → TP1</b>
 ━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime()}
 ${sig} ${trade.pair}
 🎯 TP1: <code>${fmt(trade.tp1)}</code> ✅
 🎯 TP2: <code>${fmt(trade.tp2)}</code> ✅
@@ -194,6 +196,7 @@ ${sig} ${trade.pair}
           await sendTelegramMsg(
 `🏆 <b>TRADE FERMÉ — TP3 ATTEINT</b>
 ━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime()}
 ${sig} ${trade.pair}
 🎯 TP1 ✅ TP2 ✅ TP3 ✅
 ━━━━━━━━━━━━━━━━━━━
@@ -216,6 +219,7 @@ ${sig} ${trade.pair}
             await sendTelegramMsg(
 `➡️ <b>TRADE FERMÉ — BREAKEVEN</b>
 ━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime()}
 ${sig} ${trade.pair}
 ${trade.tp1_hit?'🎯 TP1 ✅':''}
 🔄 SL touché au BE — 0 perte 👍
@@ -224,6 +228,7 @@ ${trade.tp1_hit?'🎯 TP1 ✅':''}
             await sendTelegramMsg(
 `🛑 <b>TRADE FERMÉ — SL TOUCHÉ</b>
 ━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime()}
 ${sig} ${trade.pair}
 📌 Entry: <code>${fmt(entry)}</code>
 🛑 SL: <code>${fmt(trade.sl)}</code> ❌
@@ -349,6 +354,7 @@ Rules:
           await sendTelegramMsg(
 `🤖 <b>AI TRADE ALERT — ${r.urgency==='urgent'?'⚠️ URGENT':''}</b>
 ━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime()}
 ${sig} ${trade.pair}
 📌 Entry: <code>${fmt(entry)}</code> → Now: <code>${fmt(price)}</code>
 💰 P&L: ${parseFloat(pnlR)>=0?'+':''}${pnlR}R
@@ -367,6 +373,7 @@ ${sig} ${trade.pair}
             await sendTelegramMsg(
 `🤖 <b>AI TRADE UPDATE</b>
 ━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime()}
 ${sig} ${trade.pair}
 📌 Entry: <code>${fmt(entry)}</code> | Now: <code>${fmt(price)}</code>
 💰 P&L: ${parseFloat(pnlR)>=0?'+':''}${pnlR}R
@@ -384,6 +391,7 @@ ${sig} ${trade.pair}
           await sendTelegramMsg(
 `🤖 <b>AI TRADE UPDATE — HOLD</b>
 ━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime()}
 ${sig} ${trade.pair}
 📌 Entry: <code>${fmt(entry)}</code> | Now: <code>${fmt(price)}</code>
 ${pnlEmoji} P&L: ${parseFloat(pnlR)>=0?'+':''}${pnlR}R
@@ -482,6 +490,14 @@ function log(msg) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
 }
 
+// UTC timestamp for Telegram messages — ex: "14:32 UTC"
+function utcTime() {
+  const now = new Date();
+  const h = String(now.getUTCHours()).padStart(2,'0');
+  const m = String(now.getUTCMinutes()).padStart(2,'0');
+  return `${h}:${m} UTC`;
+}
+
 // Check session change — ka-yb3at message ki tbeddel
 async function checkSessionChange() {
   if(!isActiveSession()) return;
@@ -499,7 +515,7 @@ async function checkSessionChange() {
   };
   const info = sessionInfo[session] || { time:'—', pairs:'—', tip:'—' };
 
-  const msg = `⏰ <b>SESSION ${isStart?'OUVERTE':'CHANGÉE'}</b>
+  const msg = `⏰ <b>SESSION ${isStart?'OUVERTE':'CHANGÉE'}</b> — ${utcTime()}
 ━━━━━━━━━━━━━━━━━━━
 ${session}
 🕐 ${info.time} (Maroc)
@@ -577,6 +593,7 @@ async function sendEndOfDaySummary() {
 
     const msg = `🌙 <b>RÉSUMÉ DE JOURNÉE — FX SIGNAL PRO</b>
 ━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime()}
 📅 ${today.charAt(0).toUpperCase()+today.slice(1)}
 
 ${total > 0 ? `📋 <b>Trades du jour:</b>
@@ -696,6 +713,7 @@ async function sendWeeklyReport() {
 
     const msg = `📊 <b>RAPPORT HEBDOMADAIRE — FX SIGNAL PRO</b>
 ━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime()}
 🗓️ Semaine du ${new Date(Date.now()-6*24*60*60*1000).toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} au ${new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'})}
 
 ${total > 0 ? `${dayLines}
@@ -1218,7 +1236,7 @@ async function sendTelegram(sigKey, pair, price, dec, conf, score, r, probLabel=
 `${arrow} <b>FX SIGNAL PRO</b> ${arrow}
 ━━━━━━━━━━━━━━━━━
 <b>${action} — ${pair}</b>
-⏰ ${now} Casablanca | ${sess}
+⏰ ${now} Casablanca | ${utcTime()} UTC | ${sess}
 ${probLabel}
 ━━━━━━━━━━━━━━━━━
 📌 <b>Entry:</b>  <code>${parseFloat(price).toFixed(dec)}</code>
@@ -1463,6 +1481,7 @@ async function sendDailyBriefing() {
 
     const msg = `📰 <b>BRIEFING JOURNALIER — FX SIGNAL PRO</b>
 ━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime()}
 📅 ${today.charAt(0).toUpperCase() + today.slice(1)}
 
 🔴 <b>NEWS HIGH IMPACT (${highEvents.length}):</b>
