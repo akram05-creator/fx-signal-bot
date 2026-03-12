@@ -357,16 +357,32 @@ Rules:
         const sig = trade.signal==='BUY'?'🟢 BUY':'🔴 SELL';
 
         if(r.action==='CLOSE'){
+          // Determine win/loss for AI CLOSE based on P&L
+          const aiPnlR  = parseFloat(pnlR);
+          const aiIsWin = aiPnlR > 0;
+          const aiIsBE  = aiPnlR === 0 || (aiPnlR > -0.1 && aiPnlR < 0.1);
           await dbUpdate('trades',{id:trade.id},{
-            status:'closed', closed_at:new Date().toISOString()
+            status:'closed',
+            closed_at: new Date().toISOString(),
+            pnl_pct: parseFloat(pnl.toFixed(3)),
+            ai_close: true,
+            ai_close_pnl_r: aiPnlR
           });
+          // Count AI CLOSE in win_rate (win if P&L > 0, loss if P&L < 0, skip if BE)
+          if (!aiIsBE) await updateWinRate(aiIsWin, trade.user_entered);
+          // Delete last HOLD msg if exists
+          const holdKey = `${trade.id}`;
+          if (lastHoldMsgId[holdKey]) {
+            await deleteTelegramMsg(lastHoldMsgId[holdKey]);
+            lastHoldMsgId[holdKey] = null;
+          }
           await sendTelegramMsg(
 `🤖 <b>AI TRADE ALERT — ${r.urgency==='urgent'?'⚠️ URGENT':''}</b>
 ━━━━━━━━━━━━━━━━━━━
 ⏰ ${utcTime()}
 ${sig} ${trade.pair}
 📌 Entry: <code>${fmt(entry)}</code> → Now: <code>${fmt(price)}</code>
-💰 P&L: ${parseFloat(pnlR)>=0?'+':''}${pnlR}R
+💰 P&L: ${aiPnlR>=0?'+':''}${pnlR}R ${aiIsWin?'✅':aiIsBE?'➡️':'❌'}
 
 🚨 <b>AI RECOMMENDS: CLOSE NOW</b>
 📝 "${r.reason}"
@@ -571,7 +587,7 @@ async function sendEndOfDaySummary() {
     const tp3hits = trades.filter(t=>t.tp3_hit).length;
     const slhits  = trades.filter(t=>t.sl_hit).length;
     const be      = trades.filter(t=>!t.tp1_hit&&!t.sl_hit&&t.status==='closed').length;
-    const wins    = trades.filter(t=>t.tp1_hit||t.tp2_hit||t.tp3_hit).length;
+    const wins    = trades.filter(t=>t.tp1_hit||t.tp2_hit||t.tp3_hit||(t.ai_close&&parseFloat(t.ai_close_pnl_r||0)>0.1)).length;
     const wr      = total > 0 ? Math.round((wins/total)*100) : 0;
 
     // P&L total basé sur RR
@@ -591,6 +607,7 @@ async function sendEndOfDaySummary() {
       else if(t.tp3_hit){ rr += tp1?((Math.abs(tp1-entry)/slDist)*0.40):0; rr += tp2?((Math.abs(tp2-entry)/slDist)*0.35):0; rr += tp3?((Math.abs(tp3-entry)/slDist)*0.25):0; }
       else if(t.tp2_hit){ rr += tp1?((Math.abs(tp1-entry)/slDist)*0.40):0; rr += tp2?((Math.abs(tp2-entry)/slDist)*0.35):0; }
       else if(t.tp1_hit){ rr += tp1?((Math.abs(tp1-entry)/slDist)*0.40):0; }
+      else if(t.ai_close){ rr = parseFloat(t.ai_close_pnl_r||0); } // AI CLOSE — real P&L
       else if(t.status==='closed'){ rr = 0; } // BE
       totalRR += rr;
     }
@@ -603,6 +620,10 @@ async function sendEndOfDaySummary() {
       else if(t.tp3_hit)                          result = 'TP1 ✅ TP2 ✅ TP3 ✅';
       else if(t.tp2_hit)                          result = 'TP1 ✅ TP2 ✅';
       else if(t.tp1_hit)                          result = 'TP1 ✅';
+      else if(t.ai_close){
+        const r = parseFloat(t.ai_close_pnl_r||0);
+        result = r > 0.1 ? `🤖 AI Close ✅ +${r.toFixed(2)}R` : r < -0.1 ? `🤖 AI Close ❌ ${r.toFixed(2)}R` : '🤖 AI Close ➡️ BE';
+      }
       else if(t.status==='closed')                result = 'BE ➡️';
       else                                        result = '⏳ En cours';
       return `  ${i+1}. ${sig} ${t.pair} → ${result}`;
@@ -682,7 +703,7 @@ async function sendWeeklyReport() {
     const tp3hits = trades.filter(t=>t.tp3_hit).length;
     const slhits  = trades.filter(t=>t.sl_hit).length;
     const be      = trades.filter(t=>!t.tp1_hit&&!t.sl_hit&&t.status==='closed').length;
-    const wins    = trades.filter(t=>t.tp1_hit||t.tp2_hit||t.tp3_hit).length;
+    const wins    = trades.filter(t=>t.tp1_hit||t.tp2_hit||t.tp3_hit||(t.ai_close&&parseFloat(t.ai_close_pnl_r||0)>0.1)).length;
     const wr      = total > 0 ? Math.round((wins/total)*100) : 0;
 
     // Group by day
@@ -707,20 +728,27 @@ async function sendWeeklyReport() {
         const tp3    = parseFloat(t.tp3);
         const slDist = Math.abs(entry-sl);
         let rr = 0;
-        if(t.sl_hit)      rr = -1;
-        else if(t.tp3_hit) rr = (Math.abs(tp1-entry)/slDist)*0.40 + (Math.abs(tp2-entry)/slDist)*0.35 + (Math.abs(tp3-entry)/slDist)*0.25;
-        else if(t.tp2_hit) rr = (Math.abs(tp1-entry)/slDist)*0.40 + (Math.abs(tp2-entry)/slDist)*0.35;
-        else if(t.tp1_hit) rr = (Math.abs(tp1-entry)/slDist)*0.40;
+        if(t.sl_hit)       rr = -1;
+        else if(t.tp3_hit)  rr = (Math.abs(tp1-entry)/slDist)*0.40 + (Math.abs(tp2-entry)/slDist)*0.35 + (Math.abs(tp3-entry)/slDist)*0.25;
+        else if(t.tp2_hit)  rr = (Math.abs(tp1-entry)/slDist)*0.40 + (Math.abs(tp2-entry)/slDist)*0.35;
+        else if(t.tp1_hit)  rr = (Math.abs(tp1-entry)/slDist)*0.40;
+        else if(t.ai_close) rr = parseFloat(t.ai_close_pnl_r||0); // AI CLOSE real P&L
         if(slDist) dayRR += rr;
 
         const sig    = t.signal==='BUY'?'🟢':'🔴';
-        let result   = t.sl_hit ? 'SL ❌' : t.tp3_hit ? 'TP1✅TP2✅TP3✅' : t.tp2_hit ? 'TP1✅TP2✅' : t.tp1_hit ? 'TP1✅' : t.status==='closed' ? 'BE➡️' : '⏳';
+        let result;
+        if(t.sl_hit)       result = 'SL ❌';
+        else if(t.tp3_hit) result = 'TP1✅TP2✅TP3✅';
+        else if(t.tp2_hit) result = 'TP1✅TP2✅';
+        else if(t.tp1_hit) result = 'TP1✅';
+        else if(t.ai_close){ const ar=parseFloat(t.ai_close_pnl_r||0); result = ar>0.1?`🤖AI+${ar.toFixed(2)}R✅`:ar<-0.1?`🤖AI${ar.toFixed(2)}R❌`:'🤖AI BE➡️'; }
+        else result = t.status==='closed' ? 'BE➡️' : '⏳';
         return `    ${sig} ${t.pair} → ${result}`;
       }).join('\n');
 
       totalRR += dayRR;
       const rrStr = dayRR >= 0 ? `+${dayRR.toFixed(2)}R` : `${dayRR.toFixed(2)}R`;
-      const dayWins = dayTrades.filter(t=>t.tp1_hit||t.tp2_hit||t.tp3_hit).length;
+      const dayWins = dayTrades.filter(t=>t.tp1_hit||t.tp2_hit||t.tp3_hit||(t.ai_close&&parseFloat(t.ai_close_pnl_r||0)>0.1)).length;
       return `📅 <b>${day.charAt(0).toUpperCase()+day.slice(1)}</b> (${dayTrades.length} trades | ${rrStr})\n${lines}`;
     }).join('\n\n');
 
@@ -1568,13 +1596,22 @@ CRITICAL COHERENCE RULE — NEVER BREAK THIS:
 - A signal is only valid if you can clearly identify: (1) the trigger on 15m (2) the exact SL level (3) RR >= 1.5
 - If you cannot clearly identify all 3 → WAIT, no exceptions
 
+CONFIDENCE — YOUR OWN HONEST ASSESSMENT (0-95):
+- This is NOT the score. Score is mechanical. Confidence is YOUR trader judgment.
+- Base it on: trend clarity (4H strong or weak?) + how many filters align + trigger quality (clean BOS or messy?) + market context (news? session? ATR normal?)
+- 85-95: Everything aligned perfectly — clear trend, clean trigger, OB zone, strong candles, good ATR
+- 70-84: Good setup but 1-2 things not perfect — still valid
+- 55-69: Moderate setup — borderline, proceed with caution
+- 40-54: Weak setup — consider WAIT instead
+- <40: WAIT — not enough conviction
+
 SL: use nearest 15m swing high/low (not fixed formula).
 TPs: based on real S&R levels.
 
 Reply ONLY in raw JSON no markdown:
 {
   "signal": "BUY or SELL or WAIT",
-  "confidence": 0-95,
+  "confidence": 0-95, // YOUR OWN assessment: based on trend clarity + filter alignment + trigger strength + context. NOT derived from score. Ask yourself: how convinced am I this trade will work?
   "raisonnement": "Your trader reasoning in 2 sentences: 4H bias + 1H setup + 15m trigger",
   "entry": ${t.price.toFixed(best.dec)},
   "sl": 0,
