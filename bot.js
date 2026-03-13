@@ -1637,13 +1637,18 @@ Reply ONLY in raw JSON no markdown:
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 1000,
+        max_tokens: 1500,
         temperature: 0.3,
+        response_format: { type: 'json_object' },
       }),
     });
     const data = await res.json();
+    // Log Groq errors (rate limit, quota, etc.)
+    if (data.error) { log(`[WARN] Groq API error: ${data.error.message}`); return; }
+    if (!data.choices?.length) { log(`[WARN] Groq no choices: ${JSON.stringify(data).substring(0,150)}`); return; }
     const raw  = data.choices?.[0]?.message?.content || '';
     const clean = raw.replace(/```json|```/g, '').trim();
+    if (!clean) { log(`[WARN] Groq empty response`); return; }
 
     let r;
     try {
@@ -1655,7 +1660,7 @@ Reply ONLY in raw JSON no markdown:
         try { r = JSON.parse(match[0]); }
         catch { log(`[WARN] AI returned non-JSON - skipping scan`); return; }
       } else {
-        log(`[WARN] AI returned non-JSON - skipping scan: ${clean.substring(0,100)}`);
+        log(`[WARN] AI non-JSON (${clean.length} chars): ${clean.substring(0,200)}`);
         return;
       }
     }
@@ -1859,7 +1864,7 @@ async function init() {
 }
 
 // Keep-alive server for Railway/Render
-const { createServer } = require('http');
+import { createServer } from 'http';
 createServer((req, res) => {
   res.writeHead(200);
   res.end('FX Signal Pro Bot - Running ✅');
