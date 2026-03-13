@@ -1670,16 +1670,18 @@ Reply ONLY in raw JSON no markdown:
     const isBuy  = r.signal === 'BUY';
     const isSell = r.signal === 'SELL';
 
-    // Override SL/TP avec niveaux structurés (S/R réels) - after isBuy/isSell declaration
-    if(t.structuredLevels && (isBuy||isSell)){
-      const sl = t.structuredLevels;
-      if(!parseFloat(r.sl) || !parseFloat(r.tp1)){
-        r.sl=sl.sl; r.tp1=sl.tp1; r.tp2=sl.tp2; r.tp3=sl.tp3;
-      } else {
-        const entry = parseFloat(r.entry||t.price);
-        const aiRR  = Math.abs(parseFloat(r.tp1)-entry)/Math.abs(parseFloat(r.sl)-entry);
-        if(aiRR < 1.5) r.tp1 = sl.tp1;
-      }
+    // Recalculate structuredLevels based on AI final direction (not score direction)
+    // This fixes the bug where score=haussier but AI=SELL → wrong TPs
+    const aiStructured = (candles[best.key]?.h1?.length >= 20 && candles[best.key]?.m15?.length >= 6)
+      ? calcStructuredSLTP(candles[best.key].h1, candles[best.key].m15, candles[best.key].h4||[], t.price, isBuy, best.dec)
+      : null;
+
+    if(aiStructured){
+      // Always use AI-direction structured levels for SL/TP
+      r.sl  = aiStructured.sl;
+      r.tp1 = aiStructured.tp1;
+      r.tp2 = aiStructured.tp2;
+      r.tp3 = aiStructured.tp3;
     }
 
     // AI est le seul décideur - pas de hard gate
