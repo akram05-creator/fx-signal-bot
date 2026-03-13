@@ -1181,6 +1181,17 @@ function computeTechnicals(key) {
   const candlesOk = csData.strong;
   const candlesLabel = csData.label;
 
+  // -- Volume Analysis (1H tick volume) --
+  let volContext = 'N/A', volRatio = null, lastVol = null, avgVol = null;
+  const volCandles = h1.slice(-20);
+  if(volCandles.length >= 5 && volCandles.some(v => v.v > 0)){
+    const vols = volCandles.map(v => v.v).filter(v => v > 0);
+    avgVol = Math.round(vols.reduce((a,b) => a+b, 0) / vols.length);
+    lastVol = volCandles[volCandles.length-1].v;
+    volRatio = avgVol > 0 ? parseFloat((lastVol / avgVol).toFixed(2)) : 1;
+    volContext = volRatio >= 1.5 ? 'HIGH' : volRatio <= 0.5 ? 'LOW' : 'NORMAL';
+  }
+
   // Scores
   let srScore = nearSupport ? 25 : nearResistance ? 25 : 0;
   let srDir   = nearSupport ? 'haussier' : nearResistance ? 'baissier' : 'neutre';
@@ -1245,6 +1256,7 @@ function computeTechnicals(key) {
     atr1h, atrPct, atrOk, atrLabel,
     bullOB, bearOB, nearBullOB, nearBearOB,
     candlesOk, candlesLabel, candlesLevel: csData.level, candlesCount: csData.strongCount,
+    volContext, volRatio, lastVol, avgVol,
   };
 }
 
@@ -1335,7 +1347,8 @@ async function fetchIntraCandles(pairKey) {
     ]);
     const [d1h, d15m] = await Promise.all([r1h.json(), r15m.json()]);
     const parse = d => (d?.values || []).map(v => ({
-      o: parseFloat(v.open), h: parseFloat(v.high), l: parseFloat(v.low), c: parseFloat(v.close), v: 0,
+      o: parseFloat(v.open), h: parseFloat(v.high), l: parseFloat(v.low), c: parseFloat(v.close),
+      v: parseFloat(v.volume) || 0,
     })).reverse();
     if (!candles[pairKey]) candles[pairKey] = {};
     if (d1h?.values?.length)  candles[pairKey].h1  = parse(d1h);
@@ -1519,6 +1532,32 @@ async function runScan() {
   if (t.totalScore < 40) { log(`-> WAIT: score ${t.totalScore} too low`); return; }
 
   const session = getSession();
+
+  // Fetch win rate + last trades for AI context
+  let winRateContext = 'No data yet';
+  let lastTradesContext = 'No recent trades';
+  try {
+    const wrRows = await dbSelect('win_rate', 'limit=1&order=updated_at.desc');
+    if(wrRows && wrRows.length){
+      const wr = wrRows[0];
+      winRateContext = `Total: ${wr.total_trades} trades | Wins: ${wr.wins} | Losses: ${wr.losses} | Win Rate: ${wr.total_trades>0?Math.round(wr.wins/wr.total_trades*100):0}%`;
+    }
+    const lastTrades = await dbSelect('trades', 'order=created_at.desc&limit=5');
+    if(lastTrades && lastTrades.length){
+      lastTradesContext = lastTrades.map(tr => {
+        const pnl = tr.pnl_pct != null ? (tr.pnl_pct > 0 ? `+${tr.pnl_pct.toFixed(2)}%` : `${tr.pnl_pct.toFixed(2)}%`) : 'open';
+        return `${tr.pair} ${tr.signal} ${tr.status==='active'?'[ACTIVE]':tr.status==='win'?'WIN':'LOSS'} ${pnl}`;
+      }).join(' | ');
+    }
+  } catch(e) {}
+
+  // Last 10 candles OHLC for best pair (1H closed)
+  const h1candles = candles[best.key]?.h1 || [];
+  const last10 = h1candles.slice(-10);
+  const ohlcContext = last10.length
+    ? last10.map(c2 => `O:${c2.o.toFixed(best.dec)} H:${c2.h.toFixed(best.dec)} L:${c2.l.toFixed(best.dec)} C:${c2.c.toFixed(best.dec)} V:${c2.v||0}`).join(' | ')
+    : 'N/A';
+
   const newsContext = calEvents.length
     ? calEvents.slice(0, 5).map(e => `${e.impact === 'High' ? '🔴' : e.impact === 'Medium' ? '🟡' : '🟢'} ${e.currency} ${e.title} @ ${new Date(e.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`).join('\n')
     : 'No major news today';
@@ -1536,6 +1575,13 @@ SL/TP RULES (STRICT):
 SESSION: ${session}
 PAIR: ${best.label} @ ${t.price.toFixed(best.dec)}
 OTHER PAIRS: ${analyses.slice(1).map(p => `${p.label}(${p.tech.totalScore}/100 ${p.tech.trend4h})`).join(' | ')}
+
+BOT PERFORMANCE (last trades):
+Win Rate: ${winRateContext}
+Last 5 trades: ${lastTradesContext}
+
+LAST 10 CANDLES 1H (oldest → newest):
+${ohlcContext}
 
 NEWS TODAY:
 ${newsContext}
@@ -1586,6 +1632,9 @@ Order Blocks 1H:
 
 Candle Momentum 15m: ${t.candlesLabel} (${t.candlesCount}/3 strong)
 → ${t.candlesLevel === 'strong' ? '✅ Strong momentum - confirms entry' : t.candlesLevel === 'neutral' ? '⚠️ Neutral momentum - valid but be cautious' : '❌ Weak momentum - consider WAIT'}
+
+Volume 1H (tick): ${t.volContext} | Last: ${t.lastVol||'N/A'} | Avg: ${t.avgVol||'N/A'} | Ratio: ${t.volRatio||'N/A'}x
+→ ${t.volContext==='HIGH' ? '✅ High volume - strong move confirmation' : t.volContext==='LOW' ? '⚠️ Low volume - weak move, caution' : t.volContext==='NORMAL' ? '✅ Normal volume' : 'Volume data unavailable'}
 
 YOUR JUDGMENT AS A TRADER - YOU ARE THE SOLE DECISION MAKER:
 - You can BUY/SELL even with only 2 strategies aligned IF the setup is clear
