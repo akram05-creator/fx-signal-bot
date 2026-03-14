@@ -264,6 +264,13 @@ async function analyzeActiveTrades(){
     const trades = await dbSelect('trades','status=eq.active&order=created_at.desc');
     if(!trades?.length) return;
 
+    // No HOLD messages on weekends or outside market hours
+    const dayNow = new Date().getUTCDay();
+    const hourNow = new Date().getUTCHours();
+    const isWeekend = dayNow === 0 || dayNow === 6;
+    const isMarketHours = hourNow >= 8 && hourNow < 21;
+    const canSendMsg = !isWeekend && isMarketHours;
+
     for(const trade of trades){
       // Only analyze every 30min per trade
       const now = Date.now();
@@ -410,7 +417,9 @@ ${sig} ${trade.pair}
 #AIUpdate #TradeManagement`, trade.tg_message_id||null);
           }
         } else {
-          // HOLD - delete previous HOLD msg then send new one
+          // HOLD - only during market hours (8h-21h UTC, Mon-Fri)
+          if (!canSendMsg) { log(`-> HOLD supprimé (weekend/hors heures) [${trade.pair}]`); continue; }
+          // delete previous HOLD msg then send new one
           const holdKey = `${trade.id}`;
           if (lastHoldMsgId[holdKey]) {
             await deleteTelegramMsg(lastHoldMsgId[holdKey]);
