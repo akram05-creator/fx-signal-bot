@@ -1275,6 +1275,7 @@ function computeTechnicals(key) {
   else if (volContext === 'LOW') totalScore = Math.max(0, totalScore - 5); // penalty
 
   // Candle Momentum bonus: strong = +3, weak = penalty
+  const candlesLevel = csData.level; // declare here for score use
   if (candlesLevel === 'strong') totalScore = Math.min(100, totalScore + 3);
   else if (candlesLevel === 'weak') totalScore = Math.max(0, totalScore - 3);
   const bullCount = [srDir, emaDir2, rsiDir, ictDir].filter(d => d === 'haussier').length;
