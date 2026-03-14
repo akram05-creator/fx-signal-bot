@@ -558,16 +558,16 @@ async function checkSessionChange() {
   lastSession = session;
 
   const sessionInfo = {
-    '🇬🇧 London':          { time:'10h00-19h00', pairs:'EUR/USD • GBP/USD', tip:'Breakouts + trend Londres' },
-    '🔀 London+NY Overlap': { time:'15h00-19h00', pairs:'Toutes les paires', tip:'🔥 Meilleure liquidité - aktar signals' },
-    '🇺🇸 New York':         { time:'17h00-00h00', pairs:'EUR/USD • USD/JPY', tip:'Volatilité USD forte' },
+    '🇬🇧 London':          { time:'09h00-18h00', pairs:'EUR/USD • GBP/USD', tip:'Breakouts + trend Londres' },
+    '🔀 London+NY Overlap': { time:'14h00-18h00', pairs:'Toutes les paires', tip:'🔥 Meilleure liquidité - aktar signals' },
+    '🇺🇸 New York':         { time:'14h00-23h00', pairs:'EUR/USD • USD/JPY', tip:'Volatilité USD forte' },
   };
   const info = sessionInfo[session] || { time:'-', pairs:'-', tip:'-' };
 
   const msg = `⏰ <b>SESSION ${isStart?'OUVERTE':'CHANGÉE'}</b> - ${utcTime()}
 -------------------
 ${session}
-🕐 ${info.time} (Maroc)
+🕐 ${info.time} UTC
 📊 Paires actives: ${info.pairs}
 💡 ${info.tip}
 -------------------
@@ -636,7 +636,7 @@ async function sendEndOfDaySummary() {
 
     const today = new Date().toLocaleDateString('fr-FR', {
       weekday:'long', day:'numeric', month:'long',
-      timeZone:'Africa/Casablanca'
+      timeZone:'UTC'
     });
 
     const perf = totalRR > 1 ? '🔥 Excellente journée' :
@@ -665,7 +665,7 @@ ${tradeLines}
 ${perf}` : `😴 Aucun signal aujourd'hui - marché en range`}
 
 -------------------
-📅 Prochain briefing demain à 10h00 (Maroc)
+📅 Prochain briefing demain à 08h00 UTC
 #EndOfDay #FXSignalPro`;
 
     // Friday EOD — add "See you Monday" message
@@ -728,7 +728,7 @@ function scheduleEndOfDay() {
   }, msUntil);
 }
 
-// Weekly Report - every Friday at 21h00 UTC (23h Maroc)
+// Weekly Report - every Friday at 21h00 UTC
 async function sendWeeklyReport() {
   try {
     // Get trades from last 7 days
@@ -750,7 +750,7 @@ async function sendWeeklyReport() {
     const byDay = {};
     for(const t of trades){
       const day = new Date(t.created_at).toLocaleDateString('fr-FR', {
-        weekday:'long', day:'numeric', month:'long', timeZone:'Africa/Casablanca'
+        weekday:'long', day:'numeric', month:'long', timeZone:'UTC'
       });
       if(!byDay[day]) byDay[day] = [];
       byDay[day].push(t);
@@ -840,7 +840,7 @@ On se retrouve lundi à l'ouverture du marché - restez disciplinés 💪
   }
 }
 
-// Schedule weekly report - every Friday 21h UTC (23h Maroc)
+// Schedule weekly report - every Friday 21h UTC
 function scheduleWeeklyReport() {
   const now  = new Date();
   const next = new Date();
@@ -1491,7 +1491,7 @@ async function sendTelegram(sigKey, pair, price, dec, conf, score, r, probLabel=
     const fmt    = v => parseFloat(v) > 0 ? parseFloat(v).toFixed(dec) : '-';
     const rr     = r.sl && r.tp2 ? Math.abs((parseFloat(r.tp2) - price) / (price - parseFloat(r.sl))).toFixed(1) : '-';
     const sess   = getSession();
-    const now    = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Casablanca' });
+    const now    = utcTime();
 
     // -- Lot Calculator --
     // Pip value USD account (standard lot = 100k)
@@ -1524,7 +1524,7 @@ async function sendTelegram(sigKey, pair, price, dec, conf, score, r, probLabel=
 `${arrow} <b>FX SIGNAL PRO</b> ${arrow}
 -----------------
 <b>${action} - ${pair}</b>
-⏰ ${now} Casablanca | ${utcTime()} | ${sess}
+⏰ ${now} UTC | ${sess}
 ${probLabel}
 -----------------
 📌 <b>Entry:</b>  <code>${parseFloat(price).toFixed(dec)}</code>
@@ -1655,7 +1655,7 @@ async function runScan() {
     : 'N/A';
 
   const newsContext = calEvents.length
-    ? calEvents.slice(0, 5).map(e => `${e.impact === 'High' ? '🔴' : e.impact === 'Medium' ? '🟡' : '🟢'} ${e.currency} ${e.title} @ ${new Date(e.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`).join('\n')
+    ? calEvents.slice(0, 5).map(e => `${e.impact === 'High' ? '🔴' : e.impact === 'Medium' ? '🟡' : '🟢'} ${e.currency} ${e.title} @ ${new Date(e.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}`).join('\n')
     : 'No major news today';
 
   const prompt = `You are a senior forex trader with 15 years experience. You are the SOLE decision maker - think and decide like a real trader, not a mechanical system.
@@ -1889,7 +1889,7 @@ async function sendDailyBriefing() {
 
     const today = new Date().toLocaleDateString('fr-FR', {
       weekday: 'long', day: 'numeric', month: 'long',
-      timeZone: 'Africa/Casablanca'
+      timeZone: 'UTC'
     });
 
     const highEvents   = calEvents.filter(e => e.impact === 'High');
@@ -1899,7 +1899,7 @@ async function sendDailyBriefing() {
     const formatEvents = (events) => events.length
       ? events.map(e => {
           const time = new Date(e.date).toLocaleTimeString('fr-FR',
-            { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Casablanca' });
+            { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
           return `  • ${e.currency} - ${e.title} @ ${time}`;
         }).join('\n')
       : '  Aucun';
@@ -1937,8 +1937,8 @@ ${formatEvents(mediumEvents)}
 ${impactSummary}
 
 ⏰ <b>Sessions actives aujourd'hui:</b>
-  🏦 London: 10h00 → 19h00 (Maroc)
-  🗽 New York: 15h00 → 24h00 (Maroc)
+  🏦 London: 09h00 → 18h00 UTC
+  🗽 New York: 14h00 → 23h00 UTC
   🔥 Overlap: 15h00 → 19h00 - meilleure liquidité
 
 ⚠️ Not financial advice
@@ -1951,7 +1951,7 @@ ${impactSummary}
   }
 }
 
-// Schedule daily briefing at 8h00 UTC (10h Maroc)
+// Schedule daily briefing at 8h00 UTC
 function scheduleDailyBriefing() {
   const now     = new Date();
   const next8h  = new Date();
@@ -2006,13 +2006,13 @@ async function init() {
   // Calendar refresh - kol 5min
   setInterval(fetchCalendar, 5 * 60 * 1000);
 
-  // Daily briefing kol nhar 8h UTC (10h Maroc)
+  // Daily briefing kol nhar 8h UTC
   scheduleDailyBriefing();
 
   // End of Day summary 21h UTC
   scheduleEndOfDay();
 
-  // Weekly report - Friday 21h UTC (23h Maroc)
+  // Weekly report - Friday 21h UTC
   scheduleWeeklyReport();
 
   // Session change check kol 60s
