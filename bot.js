@@ -463,6 +463,8 @@ async function updateWinRate(isWin, userEntered){
 
 // Track last HOLD message per trade (to delete before sending new one)
 const lastHoldMsgId = {};
+const lastAICall    = {};  // throttle: { pair: timestamp }
+const lastAIScore   = {};  // { pair: score } - skip AI if score unchanged
 
 async function deleteTelegramMsg(msgId) {
   if (!msgId) return;
@@ -544,6 +546,9 @@ function utcTime() {
 
 // Check session change - ka-yb3at message ki tbeddel
 async function checkSessionChange() {
+  // No messages on weekends
+  const dayNow = new Date().getUTCDay();
+  if (dayNow === 0 || dayNow === 6) return;
   if(!isActiveSession()) return;
   const session = getSession();
   if(session === lastSession) return;
@@ -663,7 +668,19 @@ ${perf}` : `😴 Aucun signal aujourd'hui - marché en range`}
 📅 Prochain briefing demain à 10h00 (Maroc)
 #EndOfDay #FXSignalPro`;
 
-    await sendTelegramMsg(msg);
+    // Friday EOD — add "See you Monday" message
+    const eodDay = new Date().getUTCDay(); // 5 = Friday
+    let finalMsg = msg;
+    if (eodDay === 5) {
+      finalMsg += `
+
+🌙 <b>Bon week-end à tous!</b>
+On se retrouve lundi à l'ouverture du marché.
+Profitez bien du repos 💪
+<i>See you next week!</i>`;
+    }
+
+    await sendTelegramMsg(finalMsg);
     log(`[OK] End of day summary sent - ${total} trades | ${rrStr}`);
 
     // Reset lastSig - signals jdad nhar jdid [OK]
@@ -683,8 +700,31 @@ function scheduleEndOfDay() {
   const msUntil = next21.getTime() - now.getTime();
   log(`[EOD] EOD summary scheduled in ${Math.round(msUntil/60000)} minutes`);
   setTimeout(async () => {
-    await sendEndOfDaySummary();
-    setInterval(sendEndOfDaySummary, 24*60*60*1000);
+    const day = new Date().getUTCDay();
+    if (day !== 0 && day !== 6) { // Skip Sunday(0) and Saturday(6)
+      await sendEndOfDaySummary();
+    } else {
+      log('[EOD] Weekend - skipping EOD summary');
+      lastSig = {};
+      lastSession = '';
+    }
+    // Schedule next day (skip weekends)
+    const scheduleNext = () => {
+      const n = new Date();
+      n.setUTCHours(21, 0, 0, 0);
+      n.setUTCDate(n.getUTCDate() + 1);
+      // If next day is Saturday(6) skip to Monday
+      if (n.getUTCDay() === 6) n.setUTCDate(n.getUTCDate() + 2);
+      // If next day is Sunday(0) skip to Monday
+      else if (n.getUTCDay() === 0) n.setUTCDate(n.getUTCDate() + 1);
+      setTimeout(async () => {
+        const d = new Date().getUTCDay();
+        if (d !== 0 && d !== 6) await sendEndOfDaySummary();
+        else { lastSig = {}; lastSession = ''; }
+        scheduleNext();
+      }, n.getTime() - Date.now());
+    };
+    scheduleNext();
   }, msUntil);
 }
 
@@ -788,7 +828,9 @@ ${bestPair ? `\n🏆 Meilleure paire: ${bestPair[0]} (${Math.round(bestPair[1].w
 ${perf}` : `😴 Aucun signal cette semaine`}
 
 -------------------
-📅 Prochain briefing lundi à 10h00 (Maroc)
+🌙 <b>Bon week-end à tous!</b>
+On se retrouve lundi à l'ouverture du marché - restez disciplinés 💪
+<i>See you next week! 🚀</i>
 #WeeklyReport #FXSignalPro`;
 
     await sendTelegramMsg(msg);
@@ -1217,7 +1259,24 @@ function computeTechnicals(key) {
   else if (active && (bos_bear || fvg_bear) && trend4h === 'baissier') { ictScore = 18; ictDir = 'baissier'; }
   else if (active) ictScore = 5;
 
-  const totalScore = srScore + emaScore + rsiScore + ictScore;
+  // Base score (100pts)
+  let totalScore = srScore + emaScore + rsiScore + ictScore;
+
+  // Bonus filters (max +20pts total) — affect throttle trigger too
+  // ATR bonus: normal volatility = +5
+  if (atrOk) totalScore = Math.min(100, totalScore + 5);
+
+  // Order Block bonus: price in OB aligned with trend = +8
+  if (nearBullOB && trend4h === 'haussier') totalScore = Math.min(100, totalScore + 8);
+  else if (nearBearOB && trend4h === 'baissier') totalScore = Math.min(100, totalScore + 8);
+
+  // Volume bonus: high volume = +4
+  if (volContext === 'HIGH') totalScore = Math.min(100, totalScore + 4);
+  else if (volContext === 'LOW') totalScore = Math.max(0, totalScore - 5); // penalty
+
+  // Candle Momentum bonus: strong = +3, weak = penalty
+  if (candlesLevel === 'strong') totalScore = Math.min(100, totalScore + 3);
+  else if (candlesLevel === 'weak') totalScore = Math.max(0, totalScore - 3);
   const bullCount = [srDir, emaDir2, rsiDir, ictDir].filter(d => d === 'haussier').length;
   const bearCount = [srDir, emaDir2, rsiDir, ictDir].filter(d => d === 'baissier').length;
   let finalDir = 'neutre';
@@ -1520,16 +1579,53 @@ async function runScan() {
 
   if (!analyses.length) { log('[WARN] No technicals yet'); return; }
 
-  const best = analyses[0];
-  const t    = best.tech;
+  // Max 2 active trades total
+  const allActiveTrades = await dbSelect('trades', 'status=eq.active&limit=10');
+  const activeCount = allActiveTrades?.length || 0;
+  if (activeCount >= 2) {
+    log(`-> Max 2 trades actifs atteint (${activeCount}/2) - scan bloqué`);
+    return;
+  }
 
-  log(`[SCAN] Scanning ${best.label} - score ${t.totalScore}/100 - ${t.finalDir}`);
+  // Filter candidates: direction claire seulement (score >= 40 minimum)
+  const candidates = analyses.filter(p => {
+    const dir = p.tech.finalDir;
+    const hasDir = dir.includes('haussier') || dir.includes('baissier');
+    return hasDir && p.tech.totalScore >= 40;
+  });
 
-  const isBull15 = t.finalDir.includes('haussier');
-  const isBear15 = t.finalDir.includes('baissier');
-  if (!isBull15 && !isBear15) { log('-> WAIT: no clear direction (0-1 aligned)'); return; }
+  if (!candidates.length) { log('-> WAIT: no valid candidates (no direction or score < 40)'); return; }
+
+  // Pick best candidate not already in active trade
+  let best = null;
+  for (const cand of candidates) {
+    const alreadyActive = allActiveTrades?.some(tr => tr.pair === cand.label);
+    if (!alreadyActive) { best = cand; break; }
+  }
+  if (!best) { log('-> All valid pairs already have active trades'); return; }
+
+  const t = best.tech;
+  log(`[SCAN] Scanning ${best.label} - score ${t.totalScore}/100 - ${t.finalDir} (active: ${activeCount}/2)`);
+
   // score < 40 = too weak even for AI
   if (t.totalScore < 40) { log(`-> WAIT: score ${t.totalScore} too low`); return; }
+
+  // AI THROTTLE — call AI only when score changes OR every 5min
+  const pairKey2 = best.key;
+  const now_ai = Date.now();
+  const lastCall = lastAICall[pairKey2] || 0;
+  const lastScore = lastAIScore[pairKey2];
+  const scoreChanged = lastScore !== t.totalScore;
+  const timeSinceCall = now_ai - lastCall;
+  const MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 min fallback
+
+  // Call AI if: score changed (INSTANT) OR 5min passed
+  if (!scoreChanged && timeSinceCall < MIN_INTERVAL_MS) {
+    log(`-> AI throttled (score=${t.totalScore} unchanged, ${Math.round(timeSinceCall/1000)}s ago)`);
+    return;
+  }
+  lastAICall[pairKey2]  = now_ai;
+  lastAIScore[pairKey2] = t.totalScore;
 
   const session = getSession();
 
@@ -1743,6 +1839,17 @@ Reply ONLY in raw JSON no markdown:
       return;
     }
 
+    // [BLOCK] 2nd trade needs AI confidence >= 70
+    const activeCountNow = allActiveTrades?.length || 0;
+    if (activeCountNow >= 1) {
+      const conf2 = parseInt(r.confidence) || 0;
+      if (conf2 < 70) {
+        log(`-> 2nd trade bloqué: AI confidence ${conf2}% < 70% requis`);
+        return;
+      }
+      log(`-> 2nd trade autorisé: AI confidence ${conf2}% >= 70% ✅`);
+    }
+
     // [BLOCK] Block new signal si nafs paire 3andha trade actif
     const activeTrades = await dbSelect('trades', `status=eq.active&pair=eq.${best.label}&limit=1`);
     if (activeTrades && activeTrades.length > 0) {
@@ -1916,9 +2023,24 @@ async function init() {
 
 // Keep-alive server for Railway/Render
 import { createServer } from 'http';
-createServer((req, res) => {
-  res.writeHead(200);
-  res.end('FX Signal Pro Bot - Running ✅');
+createServer(async (req, res) => {
+  const url = req.url?.split('?')[0];
+  if (url === '/weekly') {
+    res.writeHead(200, {'Content-Type': 'text/plain'});
+    res.end('Sending weekly report...');
+    await sendWeeklyReport();
+  } else if (url === '/eod') {
+    res.writeHead(200, {'Content-Type': 'text/plain'});
+    res.end('Sending EOD summary...');
+    await sendEndOfDaySummary();
+  } else if (url === '/briefing') {
+    res.writeHead(200, {'Content-Type': 'text/plain'});
+    res.end('Sending daily briefing...');
+    await sendDailyBriefing();
+  } else {
+    res.writeHead(200);
+    res.end('FX Signal Pro Bot - Running ✅');
+  }
 }).listen(process.env.PORT || 3000);
 
 init().catch(e => {
