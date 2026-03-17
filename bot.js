@@ -165,7 +165,7 @@ for(const trade of trades){
       await sendTelegramMsg(
 ```
 
-## `🎯 <b>TP1 ATTEINT - SL → BREAKEVEN</b>
+## `🎯 <b>TP1 ATTEINT - SL -> BREAKEVEN</b>
 
 ## ⏰ ${utcTime()}
 ${sig} ${trade.pair}
@@ -188,7 +188,7 @@ ${sig} ${trade.pair}
       await sendTelegramMsg(
 ```
 
-## `🎯 <b>TP2 ATTEINT - SL → TP1</b>
+## `🎯 <b>TP2 ATTEINT - SL -> TP1</b>
 
 ## ⏰ ${utcTime()}
 ${sig} ${trade.pair}
@@ -272,7 +272,7 @@ log(`[WARN] updateActiveTrades: ${e.message}`);
 }
 
 // AI Trade Analysis - kol 30min ila kayn trade actif
-const lastTradeAnalysis = {}; // tradeId → last analysis time
+const lastTradeAnalysis = {}; // tradeId -> last analysis time
 
 async function analyzeActiveTrades(){
 try{
@@ -409,7 +409,7 @@ Rules:
 
 ⏰ ${utcTime()}
 ${sig} ${trade.pair}
-📌 Entry: <code>${fmt(entry)}</code> → Now: <code>${fmt(price)}</code>
+📌 Entry: <code>${fmt(entry)}</code> -> Now: <code>${fmt(price)}</code>
 💰 P&L: ${aiPnlR>=0?’+’:’’}${pnlR}R ${aiIsWin?‘✅’:aiIsBE?‘➡️’:‘❌’}
 
 ## 🚨 <b>AI RECOMMENDS: CLOSE NOW</b>
@@ -434,7 +434,7 @@ ${sig} ${trade.pair}
 📌 Entry: <code>${fmt(entry)}</code> | Now: <code>${fmt(price)}</code>
 💰 P&L: ${parseFloat(pnlR)>=0?’+’:’’}${pnlR}R
 
-## 🔄 <b>AI MOVES SL: ${fmt(sl)} → ${fmt(newSL)}</b>
+## 🔄 <b>AI MOVES SL: ${fmt(sl)} -> ${fmt(newSL)}</b>
 📝 “${r.reason}”
 
 ## ✅ Update your SL manually
@@ -656,7 +656,7 @@ const tradeLines = trades.map((t,i) => {
   }
   else if(t.status==='closed')                result = 'BE ➡️';
   else                                        result = '⏳ En cours';
-  return `  ${i+1}. ${sig} ${t.pair} → ${result}`;
+  return `  ${i+1}. ${sig} ${t.pair} -> ${result}`;
 }).join('\n');
 
 const today = new Date().toLocaleDateString('fr-FR', {
@@ -699,7 +699,7 @@ ${perf}`:`😴 Aucun signal aujourd’hui - marché en range`}
 #EndOfDay #FXSignalPro`;
 
 ```
-// Friday EOD — add "See you Monday" message
+// Friday EOD - add "See you Monday" message
 const eodDay = new Date().getUTCDay(); // 5 = Friday
 let finalMsg = msg;
 if (eodDay === 5) {
@@ -819,7 +819,7 @@ const dayLines = Object.entries(byDay).map(([day, dayTrades]) => {
     else if(t.tp1_hit) result = 'TP1✅';
     else if(t.ai_close){ const ar=parseFloat(t.ai_close_pnl_r||0); result = ar>0.1?`🤖AI+${ar.toFixed(2)}R✅`:ar<-0.1?`🤖AI${ar.toFixed(2)}R❌`:'🤖AI BE➡️'; }
     else result = t.status==='closed' ? 'BE➡️' : '⏳';
-    return `    ${sig} ${t.pair} → ${result}`;
+    return `    ${sig} ${t.pair} -> ${result}`;
   }).join('\n');
 
   totalRR += dayRR;
@@ -1178,7 +1178,7 @@ const closes4h  = h4.map(x => x.c);
 const closes15m = m15.map(x => x.c);
 const dec = PAIRS.find(p => p.key === key).dec;
 
-// Daily bias (trend long terme — l muhim)
+// Daily bias (trend long terme - l muhim)
 const daily = c.daily || [];
 const closesDaily = daily.map(x => x.c);
 const ema20_daily = calcEMA(closesDaily, Math.min(20, closesDaily.length));
@@ -1322,7 +1322,7 @@ else if (active) ictScore = 5;
 // Base score (100pts)
 let totalScore = srScore + emaScore + rsiScore + ictScore;
 
-// Bonus filters (max +20pts total) — affect throttle trigger too
+// Bonus filters (max +20pts total) - affect throttle trigger too
 // ATR bonus: normal volatility = +5
 if (atrOk) totalScore = Math.min(100, totalScore + 5);
 
@@ -1620,10 +1620,10 @@ const lotCalc = slPips > 0 ? `
 ```
 
 💰 <b>RISK CALCULATOR</b> <i>(SL = ${slPipsDisplay} pips)</i>
-Risk $50   → <code>${calcLots(50)} lots</code>
-Risk $100  → <code>${calcLots(100)} lots</code>
-Risk $200  → <code>${calcLots(200)} lots</code>
-Risk $500  → <code>${calcLots(500)} lots</code>
+Risk $50   -> <code>${calcLots(50)} lots</code>
+Risk $100  -> <code>${calcLots(100)} lots</code>
+Risk $200  -> <code>${calcLots(200)} lots</code>
+Risk $500  -> <code>${calcLots(500)} lots</code>
 —————–` : ‘’;
 
 ```
@@ -1722,7 +1722,7 @@ log(`[SCAN] Scanning ${best.label} - score ${t.totalScore}/100 - ${t.finalDir} (
 // score < 40 = too weak even for AI
 if (t.totalScore < 40) { log(`-> WAIT: score ${t.totalScore} too low`); return; }
 
-// AI THROTTLE — call AI only when score changes OR every 5min
+// AI THROTTLE - call AI only when score changes OR every 5min
 const pairKey2 = best.key;
 const now_ai = Date.now();
 const lastCall = lastAICall[pairKey2] || 0;
@@ -1795,7 +1795,7 @@ const newsContext = calEvents.length
 
 const prompt = `You are a senior forex trader with 15 years experience. You are the SOLE decision maker - think and decide like a real trader, not a mechanical system.
 
-TRADING STYLE: Daily bias → 1H confirmation → 15m entry. Intraday: 30min-4h max. Tight SL on structure. Min RR 1.5.
+TRADING STYLE: Daily bias -> 1H confirmation -> 15m entry. Intraday: 30min-4h max. Tight SL on structure. Min RR 1.5.
 
 SL/TP RULES (STRICT):
 
@@ -1809,32 +1809,32 @@ PAIR: ${best.label} @ ${t.price.toFixed(best.dec)}
 OTHER PAIRS: ${analyses.slice(1).map(p => `${p.label}(${p.tech.totalScore}/100 ${p.tech.trend4h})`).join(’ | ’)}
 
 DXY (US Dollar Index): ${dxyData.price ? `${dxyData.price.toFixed(3)} | Trend: ${dxyData.trend} | Change: ${dxyData.change}%` : ‘N/A’}
-→ DXY haussier = USD strong (bearish EUR/GBP, bullish USD/JPY) | DXY baissier = USD weak (bullish EUR/GBP)
+-> DXY haussier = USD strong (bearish EUR/GBP, bullish USD/JPY) | DXY baissier = USD weak (bullish EUR/GBP)
 
 BOT PERFORMANCE (last trades):
 Win Rate: ${winRateContext}
 Last 5 trades: ${lastTradesContext}
 
-LAST 5 DAILY CANDLES (oldest → newest):
+LAST 5 DAILY CANDLES (oldest -> newest):
 ${dailyContext}
 ${isMonday ? `⚠️ MONDAY OPEN - Weekend gap: ${gapContext}` : ‘’}
 
-LAST 10 CANDLES 1H (oldest → newest):
+LAST 10 CANDLES 1H (oldest -> newest):
 ${ohlcContext}
 
 NEWS TODAY:
 ${newsContext}
 
-DAILY BIAS (most important — long term direction):
+DAILY BIAS (most important - long term direction):
 Trend: ${t.trendDaily} | Structure: ${t.structDaily}
 EMA20: ${t.ema20_daily||‘N/A’} | EMA50: ${t.ema50_daily||‘N/A’} | Price: ${t.price.toFixed(best.dec)}
-→ ${t.trendDaily===‘haussier’?‘📈 Daily bullish - prefer BUY setups’:t.trendDaily===‘baissier’?‘📉 Daily bearish - prefer SELL setups’:‘⚠️ Daily neutral - trade with caution’}
+-> ${t.trendDaily===‘haussier’?‘📈 Daily bullish - prefer BUY setups’:t.trendDaily===‘baissier’?‘📉 Daily bearish - prefer SELL setups’:‘⚠️ Daily neutral - trade with caution’}
 
 4H BIAS (intermediate):
 Trend: ${t.trend4h} | Structure: ${t.struct4h}
 EMA50: ${t.ema50_4h || ‘N/A’}
 Support: ${t.support4h} | Resistance: ${t.resistance4h}
-→ ${t.trend4h===t.trendDaily?‘✅ 4H aligned with Daily’:‘⚠️ 4H conflicts with Daily — be careful’}
+-> ${t.trend4h===t.trendDaily?‘✅ 4H aligned with Daily’:‘⚠️ 4H conflicts with Daily - be careful’}
 
 1H CONFIRMATION:
 Structure: ${t.struct1h} | EMA20: ${t.ema20 || ‘N/A’} | EMA50: ${t.ema50 || ‘N/A’} | EMA200: ${t.ema200 || ‘N/A’}
@@ -1846,18 +1846,18 @@ Swing High: ${t.recentHigh} | Swing Low: ${t.recentLow}
 Structure: ${t.struct15m} | EMA9: ${t.ema9_15m || ‘N/A’} | EMA21: ${t.ema21_15m || ‘N/A’}
 RSI 15m: ${t.rsi15m || ‘N/A’} | BOS bull: ${t.bos15m_bull} | BOS bear: ${t.bos15m_bear}
 EMA cross bull: ${t.emaCross15m_bull} | bear: ${t.emaCross15m_bear}
-Entry zone: ${t.sr15mLow} → ${t.sr15mHigh}
+Entry zone: ${t.sr15mLow} -> ${t.sr15mHigh}
 
 LIQUIDITY ZONES:
 PDH: ${t.prevDayHigh||‘N/A’} | PDL: ${t.prevDayLow||‘N/A’}
 Near PDH: ${t.nearPDH} | Near PDL: ${t.nearPDL}
 Equal Highs 4H: ${t.eqHigh} | Equal Lows 4H: ${t.eqLow}
-Liquidity Sweep Bull (swept lows→long): ${t.liqSweepBull}
-Liquidity Sweep Bear (swept highs→short): ${t.liqSweepBear}
+Liquidity Sweep Bull (swept lows->long): ${t.liqSweepBull}
+Liquidity Sweep Bear (swept highs->short): ${t.liqSweepBear}
 Liq zone BUY confirmed: ${t.liqBull} | SELL confirmed: ${t.liqBear}
 
 STRUCTURED SL/TP (calculated on real S/R structure):
-${t.structuredLevels ? `SL: ${t.structuredLevels.sl} | TP1 (RR ${t.structuredLevels.tp1RR}): ${t.structuredLevels.tp1} | TP2: ${t.structuredLevels.tp2} | TP3: ${t.structuredLevels.tp3} Next S/R levels: ${t.structuredLevels.nextLevels?.join(' → ')||'N/A'} → Use these as base levels - adjust if context requires` : ‘Insufficient data - calculate from visible structure’}
+${t.structuredLevels ? `SL: ${t.structuredLevels.sl} | TP1 (RR ${t.structuredLevels.tp1RR}): ${t.structuredLevels.tp1} | TP2: ${t.structuredLevels.tp2} | TP3: ${t.structuredLevels.tp3} Next S/R levels: ${t.structuredLevels.nextLevels?.join(' -> ')||'N/A'} -> Use these as base levels - adjust if context requires` : ‘Insufficient data - calculate from visible structure’}
 
 ICT/SMC: BOS bull: ${t.bos_bull} | BOS bear: ${t.bos_bear} | FVG bull: ${t.fvg_bull} | FVG bear: ${t.fvg_bear}
 
@@ -1866,18 +1866,18 @@ Total: ${t.totalScore}/100
 
 — ADVANCED FILTERS —
 ATR Volatility: ${t.atrLabel} | ATR 1H: ${t.atr1h||‘N/A’} (${t.atrPct||‘N/A’}% of price)
-→ ${t.atrOk ? ‘✅ Volatility normal - entry valid’ : ‘⛔ Volatility filter FAILED - consider WAIT’}
+-> ${t.atrOk ? ‘✅ Volatility normal - entry valid’ : ‘⛔ Volatility filter FAILED - consider WAIT’}
 
 Order Blocks 1H:
-Bull OB zone: ${t.bullOB ? t.bullOB.bottom+’ → ‘+t.bullOB.top : ‘none detected’}  | Price in Bull OB: ${t.nearBullOB}
-Bear OB zone: ${t.bearOB ? t.bearOB.bottom+’ → ’+t.bearOB.top : ‘none detected’}  | Price in Bear OB: ${t.nearBearOB}
-→ ${t.nearBullOB ? ‘✅ Price in Bull Order Block - strong buy zone’ : t.nearBearOB ? ‘✅ Price in Bear Order Block - strong sell zone’ : ‘Price not in OB zone’}
+Bull OB zone: ${t.bullOB ? t.bullOB.bottom+’ -> ‘+t.bullOB.top : ‘none detected’}  | Price in Bull OB: ${t.nearBullOB}
+Bear OB zone: ${t.bearOB ? t.bearOB.bottom+’ -> ’+t.bearOB.top : ‘none detected’}  | Price in Bear OB: ${t.nearBearOB}
+-> ${t.nearBullOB ? ‘✅ Price in Bull Order Block - strong buy zone’ : t.nearBearOB ? ‘✅ Price in Bear Order Block - strong sell zone’ : ‘Price not in OB zone’}
 
 Candle Momentum 15m: ${t.candlesLabel} (${t.candlesCount}/3 strong)
-→ ${t.candlesLevel === ‘strong’ ? ‘✅ Strong momentum - confirms entry’ : t.candlesLevel === ‘neutral’ ? ‘⚠️ Neutral momentum - valid but be cautious’ : ‘❌ Weak momentum - consider WAIT’}
+-> ${t.candlesLevel === ‘strong’ ? ‘✅ Strong momentum - confirms entry’ : t.candlesLevel === ‘neutral’ ? ‘⚠️ Neutral momentum - valid but be cautious’ : ‘❌ Weak momentum - consider WAIT’}
 
 Volume 1H (tick): ${t.volContext} | Last: ${t.lastVol||‘N/A’} | Avg: ${t.avgVol||‘N/A’} | Ratio: ${t.volRatio||‘N/A’}x
-→ ${t.volContext===‘HIGH’ ? ‘✅ High volume - strong move confirmation’ : t.volContext===‘LOW’ ? ‘⚠️ Low volume - weak move, caution’ : t.volContext===‘NORMAL’ ? ‘✅ Normal volume’ : ‘Volume data unavailable’}
+-> ${t.volContext===‘HIGH’ ? ‘✅ High volume - strong move confirmation’ : t.volContext===‘LOW’ ? ‘⚠️ Low volume - weak move, caution’ : t.volContext===‘NORMAL’ ? ‘✅ Normal volume’ : ‘Volume data unavailable’}
 
 YOUR JUDGMENT AS A TRADER - YOU ARE THE SOLE DECISION MAKER:
 
@@ -1889,10 +1889,10 @@ YOUR JUDGMENT AS A TRADER - YOU ARE THE SOLE DECISION MAKER:
 
 CRITICAL COHERENCE RULE - NEVER BREAK THIS:
 
-- If your analysis mentions “no clear trigger”, “waiting for confirmation”, “no trigger yet”, or any doubt about entry → signal MUST be “WAIT”
+- If your analysis mentions “no clear trigger”, “waiting for confirmation”, “no trigger yet”, or any doubt about entry -> signal MUST be “WAIT”
 - NEVER say “no trigger” in your analysis AND put BUY/SELL at the same time - this is a fatal contradiction
 - A signal is only valid if you can clearly identify: (1) the trigger on 15m (2) the exact SL level (3) RR >= 1.5
-- If you cannot clearly identify all 3 → WAIT, no exceptions
+- If you cannot clearly identify all 3 -> WAIT, no exceptions
 
 CONFIDENCE - YOUR OWN HONEST ASSESSMENT (0-95):
 
@@ -1967,7 +1967,7 @@ const isBuy  = r.signal === 'BUY';
 const isSell = r.signal === 'SELL';
 
 // Recalculate structuredLevels based on AI final direction (not score direction)
-// This fixes the bug where score=haussier but AI=SELL → wrong TPs
+// This fixes the bug where score=haussier but AI=SELL -> wrong TPs
 const aiStructured = (candles[best.key]?.h1?.length >= 20 && candles[best.key]?.m15?.length >= 6)
   ? calcStructuredSLTP(candles[best.key].h1, candles[best.key].m15, candles[best.key].h4||[], t.price, isBuy, best.dec)
   : null;
@@ -2082,22 +2082,22 @@ ${formatEvents(mediumEvents)}
 📊 <b>Impact sur le trading:</b>
 
 🔴 HIGH IMPACT:
-→ Signal bloqué 15min avant + 30min après
-→ Spreads élargis - éviter entrées manuelles
-→ Volatilité forte possible
+-> Signal bloqué 15min avant + 30min après
+-> Spreads élargis - éviter entrées manuelles
+-> Volatilité forte possible
 
 🟡 MEDIUM IMPACT:
-→ Prudence - surveiller prix avant entrée
-→ Pas de blocage automatique
+-> Prudence - surveiller prix avant entrée
+-> Pas de blocage automatique
 
 -----
 
 ${impactSummary}
 
 ⏰ <b>Sessions actives aujourd’hui:</b>
-🏦 London: 09h00 → 18h00 UTC
-🗽 New York: 14h00 → 23h00 UTC
-🔥 Overlap: 15h00 → 19h00 - meilleure liquidité
+🏦 London: 09h00 -> 18h00 UTC
+🗽 New York: 14h00 -> 23h00 UTC
+🔥 Overlap: 15h00 -> 19h00 - meilleure liquidité
 
 ⚠️ Not financial advice
 #DailyBriefing #FXSignalPro`;
