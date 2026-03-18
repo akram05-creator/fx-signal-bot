@@ -11,7 +11,7 @@ const TD_KEY2  = process.env.TD_KEY2  || 'c6f15065c04c4a5a94722b40a297dd0f';
 const TD_KEY3  = process.env.TD_KEY3  || 'a459b1e8d10240f2bff8dcb67e2ed5b6';
 const TD_KEY4  = process.env.TD_KEY4  || 'c7ccc7b36d7b4fa3a1b16b7860196049';
 const POLY_KEY = process.env.POLY_KEY || 'Vxe1pa2pDsqR2wt5XguyxYOH68DwTiKi';
-const GROQ_KEY = process.env.GROQ_KEY || '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';
+const GROQ_KEY = process.env.GROQ_KEY || '';
 const TG_TOKEN = process.env.TG_TOKEN || '8427595283:AAFaoATV4Cq-45Fq_eruMLRFaJsOrCt6Ceo';
 const TG_CHAT  = process.env.TG_CHAT  || '-1003612566723';
 const SB_URL   = process.env.SUPABASE_URL || 'https://ugbowhydxxkpsamjxxai.supabase.co';
@@ -295,40 +295,62 @@ async function analyzeActiveTrades(){
       const fmt     = v => parseFloat(v).toFixed(dec);
       const elapsed = Math.round((now - new Date(trade.created_at).getTime())/60000);
 
-      const prompt = `You are a professional forex trade manager. A trade is currently open. Analyze the current market conditions and decide what to do.
+      // 4H swing levels for trailing
+      const h4candles = candles[pair.key]?.h4 || candles[pair.key]?.daily || [];
+      const last10_4h = h4candles.slice(-10);
+      const swingHighs4h = last10_4h.map(x => x.h).sort((a,b) => b-a).slice(0,3);
+      const swingLows4h  = last10_4h.map(x => x.l).sort((a,b) => a-b).slice(0,3);
+      // Last lower high (for SELL trailing) = highest swing high below current SL
+      const lastSwingHigh4h = swingHighs4h.find(h => h < sl) || swingHighs4h[0];
+      // Last higher low (for BUY trailing) = lowest swing low above current SL  
+      const lastSwingLow4h  = swingLows4h.find(l => l > sl)  || swingLows4h[0];
+
+      const prompt = `You are a professional forex trade manager. A trade is currently open. Your job: trail the SL with the 4H market structure to lock in profits.
 
 OPEN TRADE:
 Pair: ${trade.pair}
 Direction: ${trade.signal}
 Entry: ${fmt(entry)} | Current Price: ${fmt(price)}
-SL: ${fmt(sl)} | TP1: ${fmt(tp1)} | TP2: ${fmt(tp2)} | TP3: ${fmt(tp3)}
+Current SL: ${fmt(sl)} | TP1: ${fmt(tp1)} | TP2: ${fmt(tp2)} | TP3: ${fmt(tp3)}
 TP1 Hit: ${trade.tp1_hit} | TP2 Hit: ${trade.tp2_hit}
 P&L: ${pnlR}R | Time in trade: ${elapsed} minutes
 
-CURRENT MARKET:
-Trend 4H: ${t.trend4h} | Structure 1H: ${t.struct1h} | Structure 15m: ${t.struct15m}
-RSI 1H: ${t.rsi||'N/A'} | RSI 15m: ${t.rsi15m||'N/A'}
-EMA alignment: ${t.emaDir} | ICT: ${t.ictDir}
-Score: ${t.totalScore}/100
+4H MARKET STRUCTURE (for trailing):
+Trend 4H: ${t.trend4h} | Structure 4H: ${t.struct4h}
+Last 3 swing highs (4H): ${swingHighs4h.map(h=>h.toFixed(dec)).join(' | ')}
+Last 3 swing lows  (4H): ${swingLows4h.map(l=>l.toFixed(dec)).join(' | ')}
+${isBuy ? 
+  `→ BUY trail: move SL to last 4H higher low = ${lastSwingLow4h?.toFixed(dec)} (only if > current SL ${fmt(sl)})` :
+  `→ SELL trail: move SL to last 4H lower high = ${lastSwingHigh4h?.toFixed(dec)} (only if < current SL ${fmt(sl)})`
+}
 
-Liquidity: PDH=${t.prevDayHigh||'N/A'} PDL=${t.prevDayLow||'N/A'}
-Liq sweep bull: ${t.liqSweepBull} | bear: ${t.liqSweepBear}
+1H CONFIRMATION:
+Structure 1H: ${t.struct1h} | RSI: ${t.rsi||'N/A'}
+EMA: ${t.emaDir} | Score: ${t.totalScore}/100
+
+Price Action:
+${isBuy ? `Bull PA: ${t.pa_bull?'✅ Full':'⚠️ Partial'} | ${t.paBullLabel}` : `Bear PA: ${t.pa_bear?'✅ Full':'⚠️ Partial'} | ${t.paBearLabel}`}
+Doji: ${t.doji15m||t.doji30m ? '⚠️ Indecision detected' : 'none'}
 
 NEWS: ${calEvents.filter(e=>e.impact==='High').map(e=>`${e.currency} ${e.title}`).join(', ')||'None'}
+
+TRAILING RULES (STRICT):
+- MOVE_SL: Trail SL to 4H swing structure to follow the move
+  * SELL: new_sl = last 4H lower high (below current SL) — locks profit if market continues down
+  * BUY:  new_sl = last 4H higher low (above current SL) — locks profit if market continues up
+  * Only move if trade is in profit (P&L > 0) AND new SL is better than current
+  * Move SL to last swing + 2-3 pips buffer
+- CLOSE: 4H structure broken against trade (new high > entry for SELL, new low < entry for BUY)
+  * Also CLOSE if: strong reversal candle, momentum fully reversed, HIGH impact news
+- HOLD: trend intact, no new swing to trail to yet
 
 YOUR DECISION - reply ONLY in raw JSON:
 {
   "action": "HOLD" or "CLOSE" or "MOVE_SL",
-  "new_sl": (only if MOVE_SL - new SL price as number),
-  "reason": "One sentence explanation of your decision",
+  "new_sl": (only if MOVE_SL - exact price as number with ${dec} decimals),
+  "reason": "One sentence: what 4H structure justifies this decision",
   "urgency": "normal" or "urgent"
-}
-
-Rules:
-- HOLD: market still in your favor, no action needed
-- CLOSE: structure broken against trade, momentum reversed, or news risk - exit now
-- MOVE_SL: trail SL to protect profits (only if trade is in profit)
-- Be concise and decisive - no hesitation`;
+}`;
 
       try{
         const res = await fetch('https://api.groq.com/openai/v1/chat/completions',{
@@ -1137,6 +1159,7 @@ function computeTechnicals(key) {
   const h1 = [...c.h1];
 
   const h4 = c.h4 || [];
+  const m30 = c.m30 || [];
   const m15 = c.m15 || [];
   const closes1h  = h1.map(x => x.c);
   const closes4h  = h4.map(x => x.c);
@@ -1217,16 +1240,143 @@ function computeTechnicals(key) {
   const rsiOverbought = rsi14 && rsi14 > 65;
   const rsiDir = rsiOversold ? 'haussier' : rsiOverbought ? 'baissier' : 'neutre';
 
-  // ICT/SMC
   const active = isActiveSession();
   const swingH = sr1h.recentHigh, swingL = sr1h.recentLow;
+
+  // --- Price Action Patterns (15m + 1H) ---
+  // Engulfing candle: current candle body > prev candle body * 1.5
+  const last2_15m = m15.slice(-3, -1); // last 2 closed candles
+  const last2_1h  = h1.slice(-3, -1);
+
+  // Bullish engulfing (15m)
+  const bullEngulf15m = last2_15m.length === 2 &&
+    last2_15m[0].c < last2_15m[0].o && // prev = bearish
+    last2_15m[1].c > last2_15m[1].o && // curr = bullish
+    (last2_15m[1].c - last2_15m[1].o) > (last2_15m[0].o - last2_15m[0].c) * 1.2;
+
+  // Bearish engulfing (15m)
+  const bearEngulf15m = last2_15m.length === 2 &&
+    last2_15m[0].c > last2_15m[0].o && // prev = bullish
+    last2_15m[1].c < last2_15m[1].o && // curr = bearish
+    (last2_15m[1].o - last2_15m[1].c) > (last2_15m[0].c - last2_15m[0].o) * 1.2;
+
+  // Pin bar / Hammer (rejection candle) on 15m
+  const lastC15m = m15[m15.length - 2]; // last closed
+  let pinBarBull15m = false, pinBarBear15m = false;
+  if (lastC15m) {
+    const body = Math.abs(lastC15m.c - lastC15m.o);
+    const range = lastC15m.h - lastC15m.l;
+    const lowerWick = Math.min(lastC15m.c, lastC15m.o) - lastC15m.l;
+    const upperWick = lastC15m.h - Math.max(lastC15m.c, lastC15m.o);
+    if (range > 0) {
+      pinBarBull15m = lowerWick > body * 2 && lowerWick > range * 0.6; // hammer
+      pinBarBear15m = upperWick > body * 2 && upperWick > range * 0.6; // shooting star
+    }
+  }
+
+  // Strong close (last closed 1H candle closes in top/bottom 25% of range)
+  const lastC1h = h1[h1.length - 2];
+  let strongCloseBull1h = false, strongCloseBear1h = false;
+  if (lastC1h) {
+    const range1h = lastC1h.h - lastC1h.l;
+    if (range1h > 0) {
+      strongCloseBull1h = lastC1h.c > lastC1h.l + range1h * 0.75 && lastC1h.c > lastC1h.o;
+      strongCloseBear1h = lastC1h.c < lastC1h.h - range1h * 0.75 && lastC1h.c < lastC1h.o;
+    }
+  }
+
+  // Strong close 30m
+  const lastC30m = m30.length >= 2 ? m30[m30.length - 2] : null;
+  let strongCloseBull30m = false, strongCloseBear30m = false;
+  if (lastC30m) {
+    const range30m = lastC30m.h - lastC30m.l;
+    if (range30m > 0) {
+      strongCloseBull30m = lastC30m.c > lastC30m.l + range30m * 0.75 && lastC30m.c > lastC30m.o;
+      strongCloseBear30m = lastC30m.c < lastC30m.h - range30m * 0.75 && lastC30m.c < lastC30m.o;
+    }
+  }
+
+  // Doji detection (15m + 30m) — indecision candle
+  const dojiThreshold = 0.1; // body < 10% of range
+  const lastC15m_doji = m15.length >= 2 ? m15[m15.length - 2] : null;
+  let doji15m = false, doji30m = false;
+  if (lastC15m_doji) {
+    const body15 = Math.abs(lastC15m_doji.c - lastC15m_doji.o);
+    const range15 = lastC15m_doji.h - lastC15m_doji.l;
+    doji15m = range15 > 0 && body15 / range15 < dojiThreshold;
+  }
+  if (lastC30m) {
+    const body30 = Math.abs(lastC30m.c - lastC30m.o);
+    const range30 = lastC30m.h - lastC30m.l;
+    doji30m = range30 > 0 && body30 / range30 < dojiThreshold;
+  }
+
+  // Rejection candle f S/R zone (pin bar AT support or resistance)
+  const rejectionBullSR = pinBarBull15m && nearSupport;   // hammer f support
+  const rejectionBearSR = pinBarBear15m && nearResistance; // shooting star f resistance
+
+  // Higher Highs / Lower Lows sequence (15m last 6 candles)
+  const last6_15m = m15.slice(-7, -1);
+  let hhll_bull = false, hhll_bear = false;
+  if (last6_15m.length >= 4) {
+    const highs = last6_15m.map(x => x.h);
+    const lows  = last6_15m.map(x => x.l);
+    hhll_bull = highs[highs.length-1] > highs[highs.length-3] && lows[lows.length-1] > lows[lows.length-3];
+    hhll_bear = highs[highs.length-1] < highs[highs.length-3] && lows[lows.length-1] < lows[lows.length-3];
+  }
+
+  // PA Score triggers (includes 30m + rejection)
+  const pa_bull = (bullEngulf15m || pinBarBull15m || rejectionBullSR || strongCloseBull1h || strongCloseBull30m) && hhll_bull;
+  const pa_bear = (bearEngulf15m || pinBarBear15m || rejectionBearSR || strongCloseBear1h || strongCloseBear30m) && hhll_bear;
+  const pa_bull_partial = bullEngulf15m || pinBarBull15m || rejectionBullSR || strongCloseBull1h || strongCloseBull30m || hhll_bull;
+  const pa_bear_partial = bearEngulf15m || pinBarBear15m || rejectionBearSR || strongCloseBear1h || strongCloseBear30m || hhll_bear;
+
+  // PA pattern label
+  const paBullLabel = rejectionBullSR ? 'Rejection Bull f S/R 15m' :
+    bullEngulf15m ? 'Bullish Engulfing 15m' :
+    pinBarBull15m ? 'Pin Bar Bull 15m' :
+    strongCloseBull30m ? 'Strong Close Bull 30m' :
+    strongCloseBull1h ? 'Strong Close Bull 1H' :
+    hhll_bull ? 'HH/HL sequence' : 'none';
+  const paBearLabel = rejectionBearSR ? 'Rejection Bear f S/R 15m' :
+    bearEngulf15m ? 'Bearish Engulfing 15m' :
+    pinBarBear15m ? 'Pin Bar Bear 15m' :
+    strongCloseBear30m ? 'Strong Close Bear 30m' :
+    strongCloseBear1h ? 'Strong Close Bear 1H' :
+    hhll_bear ? 'LH/LL sequence' : 'none';
+
+  // --- Fibonacci Retracement ---
+  // Calculate fib levels from last swing high/low (1H, last 50 candles)
+  const fibCandles = h1.slice(-50);
+  const fibHigh = Math.max(...fibCandles.map(x => x.h));
+  const fibLow  = Math.min(...fibCandles.map(x => x.l));
+  const fibRange = fibHigh - fibLow;
+  const fib236 = fibHigh - fibRange * 0.236;
+  const fib382 = fibHigh - fibRange * 0.382;
+  const fib500 = fibHigh - fibRange * 0.500;
+  const fib618 = fibHigh - fibRange * 0.618;
+  const fib786 = fibHigh - fibRange * 0.786;
+
+  // Price near key fib level (within 0.1%)
+  const tolerance = price * 0.001;
+  const nearFib236 = Math.abs(price - fib236) < tolerance;
+  const nearFib382 = Math.abs(price - fib382) < tolerance;
+  const nearFib500 = Math.abs(price - fib500) < tolerance;
+  const nearFib618 = Math.abs(price - fib618) < tolerance;
+  const nearFib786 = Math.abs(price - fib786) < tolerance;
+  const nearGoldenZone = nearFib618 || nearFib786; // 61.8-78.6% = golden zone
+  const nearFibAny = nearFib236 || nearFib382 || nearFib500 || nearFib618 || nearFib786;
+
+  const fibLabel = nearGoldenZone ? `Golden Zone (${nearFib618?'61.8%':'78.6%'})` :
+                   nearFib500 ? '50% retracement' :
+                   nearFib382 ? '38.2% retracement' :
+                   nearFib236 ? '23.6% retracement' : 'not at key fib level';
+
+  // Keep bos/fvg for backward compat
   const bos_bull = price > swingH * 1.0002 && struct1h === 'haussier';
   const bos_bear = price < swingL * 0.9998 && struct1h === 'baissier';
-  const midRange = (swingH + swingL) / 2;
-  const fvg_bull = price < midRange && struct1h === 'haussier';
-  const fvg_bear = price > midRange && struct1h === 'baissier';
-  const ict15m_bull = active && bos15m_bull && emaCross15m_bull && trend4h === 'haussier';
-  const ict15m_bear = active && bos15m_bear && emaCross15m_bear && trend4h === 'baissier';
+  const fvg_bull = false;
+  const fvg_bear = false;
 
   // -- ATR Volatility Filter --
   const atrData = atrFilter(h1, price, dec);
@@ -1278,11 +1428,21 @@ function computeTechnicals(key) {
   else if (rsiOverbought && nearResistance) rsiScore = 25;
   else if (rsiOversold || rsiOverbought)    rsiScore = 15;
 
-  if (active && (ict15m_bull || (bos_bull && bos15m_bull)) && trend4h === 'haussier') { ictScore = 25; ictDir = 'haussier'; }
-  else if (active && (ict15m_bear || (bos_bear && bos15m_bear)) && trend4h === 'baissier') { ictScore = 25; ictDir = 'baissier'; }
-  else if (active && (bos_bull || fvg_bull) && trend4h === 'haussier') { ictScore = 18; ictDir = 'haussier'; }
-  else if (active && (bos_bear || fvg_bear) && trend4h === 'baissier') { ictScore = 18; ictDir = 'baissier'; }
-  else if (active) ictScore = 5;
+  // PA Score (replaces ICT)
+  // Full PA setup (pattern + sequence + trend aligned) = 25pts
+  // Partial (1 pattern only) = 15pts
+  // Fib golden zone bonus = +5pts
+  if (active && pa_bull && trend4h === 'haussier') { ictScore = 25; ictDir = 'haussier'; }
+  else if (active && pa_bear && trend4h === 'baissier') { ictScore = 25; ictDir = 'baissier'; }
+  else if (active && pa_bull_partial && trend4h === 'haussier') { ictScore = 15; ictDir = 'haussier'; }
+  else if (active && pa_bear_partial && trend4h === 'baissier') { ictScore = 15; ictDir = 'baissier'; }
+  else if (active && bos_bull && trend4h === 'haussier') { ictScore = 10; ictDir = 'haussier'; }
+  else if (active && bos_bear && trend4h === 'baissier') { ictScore = 10; ictDir = 'baissier'; }
+  else if (active) ictScore = 0;
+
+  // Fibonacci bonus
+  if (nearGoldenZone) ictScore = Math.min(25, ictScore + 5);
+  else if (nearFibAny) ictScore = Math.min(25, ictScore + 3);
 
   // Base score (100pts)
   let totalScore = srScore + emaScore + rsiScore + ictScore;
@@ -1334,6 +1494,15 @@ function computeTechnicals(key) {
     eqHigh, eqLow, liqSweepBull, liqSweepBear, nearPDH, nearPDL, liqBull, liqBear,
     recentHigh: sr1h.recentHigh.toFixed(dec), recentLow: sr1h.recentLow.toFixed(dec),
     bos_bull, bos_bear, fvg_bull, fvg_bear, active,
+    pa_bull, pa_bear, pa_bull_partial, pa_bear_partial,
+    doji15m, doji30m, rejectionBullSR, rejectionBearSR,
+    strongCloseBull30m, strongCloseBear30m,
+    bullEngulf15m, bearEngulf15m, pinBarBull15m, pinBarBear15m,
+    strongCloseBull1h, strongCloseBear1h, hhll_bull, hhll_bear,
+    paBullLabel, paBearLabel,
+    fib236: fib236.toFixed(dec), fib382: fib382.toFixed(dec),
+    fib500: fib500.toFixed(dec), fib618: fib618.toFixed(dec), fib786: fib786.toFixed(dec),
+    nearFibAny, nearGoldenZone, fibLabel,
     trendDaily, structDaily, ema20_daily: ema20_daily?.toFixed(4), ema50_daily: ema50_daily?.toFixed(4),
     srScore, emaScore, rsiScore, ictScore, totalScore,
     srDir, emaDir: emaDir2, rsiDir, ictDir, finalDir,
@@ -1462,19 +1631,21 @@ async function fetchIntraCandles(pairKey) {
   const keyMap = { EURUSD: TD_KEY, GBPUSD: TD_KEY2, XAUUSD: TD_KEY3, USDJPY: TD_KEY4 };
   const apiKey = keyMap[pairKey] || TD_KEY;
   try {
-    const [r1h, r15m] = await Promise.all([
+    const [r1h, r30m, r15m] = await Promise.all([
       fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=1h&outputsize=100&apikey=${apiKey}`),
+      fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=30min&outputsize=100&apikey=${apiKey}`),
       fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=15min&outputsize=150&apikey=${apiKey}`),
     ]);
-    const [d1h, d15m] = await Promise.all([r1h.json(), r15m.json()]);
+    const [d1h, d30m, d15m] = await Promise.all([r1h.json(), r30m.json(), r15m.json()]);
     const parse = d => (d?.values || []).map(v => ({
       o: parseFloat(v.open), h: parseFloat(v.high), l: parseFloat(v.low), c: parseFloat(v.close),
       v: parseFloat(v.volume) || 0,
     })).reverse();
     if (!candles[pairKey]) candles[pairKey] = {};
     if (d1h?.values?.length)  candles[pairKey].h1  = parse(d1h);
+    if (d30m?.values?.length) candles[pairKey].m30 = parse(d30m);
     if (d15m?.values?.length) candles[pairKey].m15 = parse(d15m);
-    log(`[OK] Intra ${pairKey}: 1H=${candles[pairKey].h1?.length} 15m=${candles[pairKey].m15?.length}`);
+    log(`[OK] Intra ${pairKey}: 1H=${candles[pairKey].h1?.length} 30m=${candles[pairKey].m30?.length} 15m=${candles[pairKey].m15?.length}`);
   } catch (e) {
     log(`[WARN] Intra ${pairKey}: ${e.message}`);
   }
@@ -1811,7 +1982,22 @@ ${t.structuredLevels ? `SL: ${t.structuredLevels.sl} | TP1 (RR ${t.structuredLev
 Next S/R levels: ${t.structuredLevels.nextLevels?.join(' -> ')||'N/A'}
 -> Use these as base levels - adjust if context requires` : 'Insufficient data - calculate from visible structure'}
 
-ICT/SMC: BOS bull: ${t.bos_bull} | BOS bear: ${t.bos_bear} | FVG bull: ${t.fvg_bull} | FVG bear: ${t.fvg_bear}
+PRICE ACTION (15m + 1H):
+  Bull patterns: ${t.pa_bull ? '✅ FULL setup' : t.pa_bull_partial ? '⚠️ Partial' : '❌ None'}
+    → ${t.paBullLabel}
+  Bear patterns: ${t.pa_bear ? '✅ FULL setup' : t.pa_bear_partial ? '⚠️ Partial' : '❌ None'}
+    → ${t.paBearLabel}
+  Details: Engulf Bull=${t.bullEngulf15m} Bear=${t.bearEngulf15m} | PinBar Bull=${t.pinBarBull15m} Bear=${t.pinBarBear15m}
+  Rejection f S/R: Bull=${t.rejectionBullSR} Bear=${t.rejectionBearSR}
+  Strong Close 30m: Bull=${t.strongCloseBull30m} Bear=${t.strongCloseBear30m}
+  Doji: 15m=${t.doji15m} 30m=${t.doji30m} ${(t.doji15m||t.doji30m)?'⚠️ Indecision - avoid entry':''}
+  Strong Close 1H: Bull=${t.strongCloseBull1h} Bear=${t.strongCloseBear1h}
+  HH/HL=${t.hhll_bull} | LH/LL=${t.hhll_bear}
+
+FIBONACCI (1H swing):
+  23.6%: ${t.fib236} | 38.2%: ${t.fib382} | 50%: ${t.fib500} | 61.8%: ${t.fib618} | 78.6%: ${t.fib786}
+  Price at: ${t.fibLabel}
+  ${t.nearGoldenZone ? '🎯 GOLDEN ZONE - highest probability reversal zone' : t.nearFibAny ? '📍 At fib level - good confluence' : 'Not at key fib level'}
 
 SCORES: S&R: ${t.srScore}/25 (${t.srDir}) | EMA: ${t.emaScore}/25 (${t.emaDir}) | RSI: ${t.rsiScore}/25 (${t.rsiDir}) | ICT: ${t.ictScore}/25 (${t.ictDir})
 Total: ${t.totalScore}/100
@@ -1832,29 +2018,61 @@ Volume 1H (tick): ${t.volContext} | Last: ${t.lastVol||'N/A'} | Avg: ${t.avgVol|
 -> ${t.volContext==='HIGH' ? '✅ High volume - strong move confirmation' : t.volContext==='LOW' ? '⚠️ Low volume - weak move, caution' : t.volContext==='NORMAL' ? '✅ Normal volume' : 'Volume data unavailable'}
 
 YOUR JUDGMENT AS A TRADER - YOU ARE THE SOLE DECISION MAKER:
-- You can BUY/SELL even with only 2 strategies aligned IF the setup is clear
-- You can BUY/SELL even with score < 65 IF you see a genuine opportunity
-- You can WAIT even with score 90 IF the context doesn't feel right
-- Key: clear setup + logical SL + RR >= 1.5
-- WAIT only if: no visible setup, full range market, or HIGH IMPACT news imminent
+- You think like a professional trend-following trader
+- The Daily/4H trend is your bible — NEVER trade against it
+- You wait for the market to come to YOU (pullback to key level), then enter WITH the trend
+- Key: trend aligned + price at level + PA pattern confirms + momentum present + RR >= 1.5
+- WAIT is always better than a bad trade
 
-CRITICAL COHERENCE RULE - NEVER BREAK THIS:
-- If your analysis mentions "no clear trigger", "waiting for confirmation", "no trigger yet", or any doubt about entry -> signal MUST be "WAIT"
-- NEVER say "no trigger" in your analysis AND put BUY/SELL at the same time - this is a fatal contradiction
-- A signal is only valid if you can clearly identify: (1) the trigger on 15m (2) the exact SL level (3) RR >= 1.5
-- If you cannot clearly identify all 3 -> WAIT, no exceptions
+CRITICAL RULES - NEVER BREAK THESE:
+
+1. TREND RULE (most important):
+- Daily trend haussier → BUY signals ONLY. Any SELL idea = WAIT.
+- Daily trend baissier → SELL signals ONLY. Any BUY idea = WAIT.
+- Daily neutre → follow 4H trend instead
+- Trading against the trend = the biggest mistake in trading
+
+2. PULLBACK ENTRY RULE:
+- Wait for price to pull back to a key level (S/R, OB, Fibonacci 38-62%) THEN enter
+- Market haussier pulling back to support → BUY entry ✅
+- Market baissier pulling back to resistance → SELL entry ✅
+- Never enter in the middle of a trend without a pullback — that is chasing
+
+3. MOMENTUM RULE:
+- Momentum weak (0/3 candles) = WAIT always, no exceptions
+- Strong entry needs at least 1-2 candles confirming direction
+- Doji present = indecision = WAIT
+
+4. RSI RULE:
+- RSI oversold (<35) + SELL = FORBIDDEN (possible bounce)
+- RSI overbought (>65) + BUY = FORBIDDEN (possible drop)
+- Exception: RSI crossing 65 downward → SELL valid
+- Exception: RSI crossing 35 upward → BUY valid
+
+5. ENTRY TIMING RULE:
+- Price already moved 30+ pips from structure = LATE = WAIT
+- Valid entry: price AT the level (S/R, OB, fib), not after the move
+- Rejection candle AT level = best entry signal
+
+6. PRICE ACTION CONFIRMATION:
+- Best setups: Engulfing OR Pin Bar/Rejection OR Strong Close AT key level
+- Fibonacci golden zone (61.8-78.6%) + PA pattern = highest probability
+- No PA pattern = no entry, wait for confirmation candle
+
+7. COHERENCE RULE:
+- "no clear trigger" in analysis → WAIT
+- Valid signal requires: (1) PA trigger on 15m/30m (2) SL on nearest structure (3) RR >= 1.5
+- If you cannot identify all 3 clearly → WAIT
 
 CONFIDENCE - YOUR OWN HONEST ASSESSMENT (0-95):
-- This is NOT the score. Score is mechanical. Confidence is YOUR trader judgment.
-- Base it on: trend clarity (4H strong or weak?) + how many filters align + trigger quality (clean BOS or messy?) + market context (news? session? ATR normal?)
-- 85-95: Everything aligned perfectly - clear trend, clean trigger, OB zone, strong candles, good ATR
-- 70-84: Good setup but 1-2 things not perfect - still valid
-- 55-69: Moderate setup - borderline, proceed with caution
-- 40-54: Weak setup - consider WAIT instead
-- <40: WAIT - not enough conviction
+- 85-95: Trend clear + pullback to key level + PA pattern + momentum + fib confluence
+- 70-84: Good setup, 1-2 elements missing but trend aligned
+- 55-69: Moderate, borderline — be cautious
+- 40-54: Weak — lean toward WAIT
+- <40: WAIT
 
-SL: use nearest 15m swing high/low (not fixed formula).
-TPs: based on real S&R levels.
+SL: nearest 15m/30m swing high (SELL) or swing low (BUY) — real structure, not fixed pips.
+TPs: next key S/R levels in trend direction.
 
 Reply ONLY in raw JSON no markdown:
 {
@@ -1870,7 +2088,7 @@ Reply ONLY in raw JSON no markdown:
   "sr_detail": "S&R analysis one sentence",
   "ema_detail": "EMA alignment one sentence",
   "rsi_detail": "RSI reading one sentence",
-  "ict_detail": "ICT/SMC structure one sentence",
+  "pa_detail": "Price Action pattern seen on 15m/1H one sentence + fib level if relevant",
   "analyse": "Full analysis: (1) 4H context (2) 1H setup (3) 15m trigger (4) trade plan"
 }`;
 
@@ -1932,10 +2150,32 @@ Reply ONLY in raw JSON no markdown:
     // Si AI dit BUY/SELL -> on envoie. Si AI dit WAIT -> on skip.
     if (!isBuy && !isSell) { log(`-> AI dit WAIT - skip`); return; }
 
-    // [BLOCK] ATR HARD BLOCK - avant tout, indépendamment de l'AI
+    // [BLOCK] ATR HARD BLOCK
     if (!t.atrOk) {
       log(`[BLOCK] ATR hard block [${best.label}]: ${t.atrLabel} - signal annulé`);
       return;
+    }
+
+    // [BLOCK] MOMENTUM WEAK = block signal (0/3 strong candles)
+    if (t.candlesLevel === 'weak') {
+      log(`[BLOCK] Momentum faible [${best.label}]: 0/3 bougies - signal annulé`);
+      return;
+    }
+
+    // [BLOCK] CONTRE TREND — signal doit aller AVEC Daily/4H trend
+    // Exception: si Daily neutre → on accepte les 2 directions
+    if (t.trendDaily !== 'neutre') {
+      const signalDir = isBuy ? 'haussier' : 'baissier';
+      if (signalDir !== t.trendDaily) {
+        log(`[BLOCK] Contre trend [${best.label}]: AI=${r.signal} mais Daily=${t.trendDaily} - signal annulé`);
+        return;
+      }
+    } else if (t.trend4h !== 'neutre') {
+      const signalDir = isBuy ? 'haussier' : 'baissier';
+      if (signalDir !== t.trend4h) {
+        log(`[BLOCK] Contre trend [${best.label}]: AI=${r.signal} mais 4H=${t.trend4h} - signal annulé`);
+        return;
+      }
     }
 
     // [BLOCK] 2nd trade needs AI confidence >= 70
@@ -2084,11 +2324,41 @@ async function init() {
   await fetchPrices();
   await fetchCalendar();
 
-  // On startup: check active trades and send resume
+  // On startup: check active trades - close stale ones where SL already hit
   try {
     const activeTrades = await dbSelect('trades', 'status=eq.active&order=created_at.desc');
     if (activeTrades && activeTrades.length > 0) {
       for (const trade of activeTrades) {
+        // Check if SL already hit (price past SL level)
+        const pairObj = PAIRS.find(p => p.label === trade.pair);
+        const startupPrice = prices[pairObj?.key];
+        if (currentPrice && trade.sl) {
+          const isBuy = trade.signal === 'BUY';
+          const slHit = isBuy ? startupPrice <= parseFloat(trade.sl) : startupPrice >= parseFloat(trade.sl);
+          if (slHit) {
+            await dbUpdate('trades', { id: trade.id }, {
+              status: 'closed',
+              sl_hit: true,
+              closed_at: new Date().toISOString()
+            });
+            await updateWinRate(false);
+            const dec = pairObj?.dec || 5;
+            const fmt = v => parseFloat(v).toFixed(dec);
+            const sig = trade.signal === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+            await sendTelegramMsg(
+`🛑 <b>TRADE FERMÉ - SL TOUCHÉ</b> <i>(détecté au redémarrage)</i>
+-------------------
+⏰ ${utcTime()}
+${sig} ${trade.pair}
+📌 Entry: <code>${fmt(trade.entry)}</code>
+🛑 SL: <code>${fmt(trade.sl)}</code> ❌
+-------------------
+💰 P&L: -1R
+#SLHit #FXSignalPro`);
+            log(`[SL] Stale trade closed on startup: ${trade.pair}`);
+            continue;
+          }
+        }
         const pair = PAIRS.find(p => p.label === trade.pair);
         const dec = pair?.dec || 5;
         const fmt = v => parseFloat(v).toFixed(dec);
@@ -2117,6 +2387,46 @@ ${pnlEmoji} P&L: ${parseFloat(pnlR) >= 0 ? '+' : ''}${pnlR}R
         // Update tg_message_id with new message
         if (msgId) await dbUpdate('trades', { id: trade.id }, { tg_message_id: msgId });
         log(`[OK] Active trade resume sent: ${trade.pair}`);
+
+        // Check if SL/TP already hit while bot was offline
+        const currentPrice = prices[pair?.key] || parseFloat(trade.entry);
+        const tradeIsBuy = trade.signal === 'BUY';
+        const tradeSL = parseFloat(trade.sl);
+        const tradeTP1 = parseFloat(trade.tp1);
+        const slAlreadyHit = tradeSL > 0 && ((tradeIsBuy && currentPrice <= tradeSL) || (!tradeIsBuy && currentPrice >= tradeSL));
+        const tp1AlreadyHit = tradeTP1 > 0 && ((tradeIsBuy && currentPrice >= tradeTP1) || (!tradeIsBuy && currentPrice <= tradeTP1));
+
+        if (slAlreadyHit && !trade.sl_hit) {
+          await dbUpdate('trades', { id: trade.id }, {
+            sl_hit: true, status: 'closed',
+            closed_at: new Date().toISOString()
+          });
+          await updateWinRate(false, trade.user_entered);
+          await sendTelegramMsg(
+`🛑 <b>SL TOUCHÉ (détecté au redémarrage)</b>
+-------------------
+⏰ ${utcTime()}
+${sig} ${trade.pair}
+📌 Entry: <code>${fmt(trade.entry)}</code>
+🛑 SL: <code>${fmt(trade.sl)}</code> ❌
+-------------------
+💰 P&L: -1R
+#SLHit #FXSignalPro`, msgId);
+          log(`[OK] SL hit detected on startup: ${trade.pair}`);
+        } else if (tp1AlreadyHit && !trade.tp1_hit) {
+          await dbUpdate('trades', { id: trade.id }, {
+            tp1_hit: true, sl: parseFloat(trade.entry)
+          });
+          await sendTelegramMsg(
+`🎯 <b>TP1 ATTEINT (détecté au redémarrage)</b>
+-------------------
+⏰ ${utcTime()}
+${sig} ${trade.pair}
+🎯 TP1: <code>${fmt(trade.tp1)}</code> ✅
+🔄 SL déplacé à BE
+#TP1Hit #FXSignalPro`, msgId);
+          log(`[OK] TP1 hit detected on startup: ${trade.pair}`);
+        }
       }
     }
   } catch(e) {
