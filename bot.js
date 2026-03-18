@@ -473,6 +473,7 @@ async function updateWinRate(isWin, userEntered){
 // Track last HOLD message per trade (to delete before sending new one)
 const lastHoldMsgId = {};
 let dxyData = { price: null, trend: 'neutre', change: null }; // DXY correlation
+let dxyRefreshCount = 0; // DXY refresh counter
 const lastAICall    = {};  // throttle: { pair: timestamp }
 const lastAIScore   = {};  // { pair: score } - skip AI if score unchanged
 
@@ -1445,7 +1446,10 @@ async function fetchDailyCandles(pairKey) {
     const data = await res.json();
     const bars = (data.results || []).map(b => ({ o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }));
     if (!candles[pairKey]) candles[pairKey] = {};
-    if (bars.length) candles[pairKey].h4 = bars;
+    if (bars.length) {
+      candles[pairKey].daily = bars;  // daily candles -> .daily
+      candles[pairKey].h4    = bars;  // keep .h4 alias for compatibility
+    }
     log(`[OK] Daily ${pairKey}: ${bars.length} candles`);
   } catch (e) {
     log(`[WARN] Daily ${pairKey}: ${e.message}`);
