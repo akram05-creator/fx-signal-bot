@@ -11,7 +11,7 @@ const TD_KEY2  = process.env.TD_KEY2  || 'c6f15065c04c4a5a94722b40a297dd0f';
 const TD_KEY3  = process.env.TD_KEY3  || 'a459b1e8d10240f2bff8dcb67e2ed5b6';
 const TD_KEY4  = process.env.TD_KEY4  || 'c7ccc7b36d7b4fa3a1b16b7860196049';
 const POLY_KEY = process.env.POLY_KEY || 'Vxe1pa2pDsqR2wt5XguyxYOH68DwTiKi';
-const GROQ_KEY = process.env.GROQ_KEY || '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';
+const GROQ_KEY = process.env.GROQ_KEY || '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';
 const TG_TOKEN = process.env.TG_TOKEN || '8427595283:AAFaoATV4Cq-45Fq_eruMLRFaJsOrCt6Ceo';
 const TG_CHAT  = process.env.TG_CHAT  || '-1003612566723';
 const SB_URL   = process.env.SUPABASE_URL || 'https://ugbowhydxxkpsamjxxai.supabase.co';
@@ -2083,6 +2083,45 @@ async function init() {
   await fetchAllCandles();
   await fetchPrices();
   await fetchCalendar();
+
+  // On startup: check active trades and send resume
+  try {
+    const activeTrades = await dbSelect('trades', 'status=eq.active&order=created_at.desc');
+    if (activeTrades && activeTrades.length > 0) {
+      for (const trade of activeTrades) {
+        const pair = PAIRS.find(p => p.label === trade.pair);
+        const dec = pair?.dec || 5;
+        const fmt = v => parseFloat(v).toFixed(dec);
+        const sig = trade.signal === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+        const price = prices[pair?.key] || trade.entry;
+        const isBuy = trade.signal === 'BUY';
+        const entry = parseFloat(trade.entry);
+        const sl = parseFloat(trade.sl);
+        const pnlR = sl ? ((isBuy ? price - entry : entry - price) / Math.abs(entry - sl)).toFixed(2) : '0';
+        const pnlEmoji = parseFloat(pnlR) >= 0 ? '📈' : '📉';
+        const elapsed = Math.round((Date.now() - new Date(trade.created_at).getTime()) / 60000);
+        const msgId = await sendTelegramMsg(
+`🤖 <b>BOT REDÉMARRÉ - TRADE ACTIF</b>
+-------------------
+⏰ ${utcTime()}
+${sig} ${trade.pair}
+📌 Entry: <code>${fmt(trade.entry)}</code> | Now: <code>${fmt(price)}</code>
+${pnlEmoji} P&L: ${parseFloat(pnlR) >= 0 ? '+' : ''}${pnlR}R
+🛑 SL: <code>${fmt(trade.sl)}</code>
+🎯 TP1: <code>${fmt(trade.tp1)}</code> ${trade.tp1_hit ? '✅' : ''}
+🎯 TP2: <code>${fmt(trade.tp2)}</code> ${trade.tp2_hit ? '✅' : ''}
+🎯 TP3: <code>${fmt(trade.tp3)}</code> ${trade.tp3_hit ? '✅' : ''}
+-------------------
+⏳ Trade ouvert depuis ${elapsed} minutes
+#TradeActif #FXSignalPro`);
+        // Update tg_message_id with new message
+        if (msgId) await dbUpdate('trades', { id: trade.id }, { tg_message_id: msgId });
+        log(`[OK] Active trade resume sent: ${trade.pair}`);
+      }
+    }
+  } catch(e) {
+    log(`[WARN] Active trade resume: ${e.message}`);
+  }
 
   // Run first scan
   await runScan();
