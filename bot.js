@@ -1851,7 +1851,7 @@ async function runScan() {
   const lastScore = lastAIScore[pairKey2];
   const scoreChanged = lastScore !== t.totalScore;
   const timeSinceCall = now_ai - lastCall;
-  const MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 min fallback
+  const MIN_INTERVAL_MS = 25 * 60 * 1000; // 25 min fallback
 
   // Call AI if: score changed (INSTANT) OR 5min passed
   if (!scoreChanged && timeSinceCall < MIN_INTERVAL_MS) {
@@ -1883,14 +1883,14 @@ async function runScan() {
 
   // Last 10 candles OHLC for best pair (1H closed)
   const h1candles = candles[best.key]?.h1 || [];
-  const last10 = h1candles.slice(-10);
+  const last10 = h1candles.slice(-6);
   const ohlcContext = last10.length
     ? last10.map(c2 => `O:${c2.o.toFixed(best.dec)} H:${c2.h.toFixed(best.dec)} L:${c2.l.toFixed(best.dec)} C:${c2.c.toFixed(best.dec)} V:${c2.v||0}`).join(' | ')
     : 'N/A';
 
   // Daily candles context (last 5 days)
   const dailyCandles = candles[best.key]?.daily || [];
-  const last5daily = dailyCandles.slice(-5);
+  const last5daily = dailyCandles.slice(-3);
   const dailyContext = last5daily.length
     ? last5daily.map(c2 => `O:${c2.o.toFixed(best.dec)} H:${c2.h.toFixed(best.dec)} L:${c2.l.toFixed(best.dec)} C:${c2.c.toFixed(best.dec)}`).join(' | ')
     : 'N/A';
@@ -1929,19 +1929,13 @@ SESSION: ${session} | DAY: ${dayContext}
 PAIR: ${best.label} @ ${t.price.toFixed(best.dec)}
 OTHER PAIRS: ${analyses.slice(1).map(p => `${p.label}(${p.tech.totalScore}/100 ${p.tech.trend4h})`).join(' | ')}
 
-DXY (US Dollar Index): ${dxyData.price ? `${dxyData.price.toFixed(3)} | Trend: ${dxyData.trend} | Change: ${dxyData.change}%` : 'N/A'}
--> DXY haussier = USD strong (bearish EUR/GBP, bullish USD/JPY) | DXY baissier = USD weak (bullish EUR/GBP)
-
-BOT PERFORMANCE (last trades):
-Win Rate: ${winRateContext}
-Last 5 trades: ${lastTradesContext}
+DXY: ${dxyData.price?`${dxyData.price.toFixed(3)} ${dxyData.trend} ${dxyData.change}%`:'N/A'}
 
 LAST 5 DAILY CANDLES (oldest -> newest):
 ${dailyContext}
 ${isMonday ? `⚠️ MONDAY OPEN - Weekend gap: ${gapContext}` : ''}
 
-LAST 10 CANDLES 1H (oldest -> newest):
-${ohlcContext}
+LAST 6 CANDLES 1H: ${ohlcContext}
 
 NEWS TODAY:
 ${newsContext}
@@ -1969,18 +1963,9 @@ RSI 15m: ${t.rsi15m || 'N/A'} | BOS bull: ${t.bos15m_bull} | BOS bear: ${t.bos15
 EMA cross bull: ${t.emaCross15m_bull} | bear: ${t.emaCross15m_bear}
 Entry zone: ${t.sr15mLow} -> ${t.sr15mHigh}
 
-LIQUIDITY ZONES:
-PDH: ${t.prevDayHigh||'N/A'} | PDL: ${t.prevDayLow||'N/A'}
-Near PDH: ${t.nearPDH} | Near PDL: ${t.nearPDL}
-Equal Highs 4H: ${t.eqHigh} | Equal Lows 4H: ${t.eqLow}
-Liquidity Sweep Bull (swept lows->long): ${t.liqSweepBull}
-Liquidity Sweep Bear (swept highs->short): ${t.liqSweepBear}
-Liq zone BUY confirmed: ${t.liqBull} | SELL confirmed: ${t.liqBear}
+LIQUIDITY: PDH=${t.prevDayHigh||'N/A'} PDL=${t.prevDayLow||'N/A'} | NearPDH=${t.nearPDH} NearPDL=${t.nearPDL} | LiqBull=${t.liqBull} LiqBear=${t.liqBear}
 
-STRUCTURED SL/TP (calculated on real S/R structure):
-${t.structuredLevels ? `SL: ${t.structuredLevels.sl} | TP1 (RR ${t.structuredLevels.tp1RR}): ${t.structuredLevels.tp1} | TP2: ${t.structuredLevels.tp2} | TP3: ${t.structuredLevels.tp3}
-Next S/R levels: ${t.structuredLevels.nextLevels?.join(' -> ')||'N/A'}
--> Use these as base levels - adjust if context requires` : 'Insufficient data - calculate from visible structure'}
+S/R levels: ${t.structuredLevels ? `SL=${t.structuredLevels.sl} TP1=${t.structuredLevels.tp1} TP2=${t.structuredLevels.tp2} TP3=${t.structuredLevels.tp3} (next: ${t.structuredLevels.nextLevels?.join(' → ')||'N/A'})` : 'calculate from structure'}
 
 PRICE ACTION (15m + 1H):
   Bull patterns: ${t.pa_bull ? '✅ FULL setup' : t.pa_bull_partial ? '⚠️ Partial' : '❌ None'}
@@ -1994,22 +1979,15 @@ PRICE ACTION (15m + 1H):
   Strong Close 1H: Bull=${t.strongCloseBull1h} Bear=${t.strongCloseBear1h}
   HH/HL=${t.hhll_bull} | LH/LL=${t.hhll_bear}
 
-FIBONACCI (1H swing):
-  23.6%: ${t.fib236} | 38.2%: ${t.fib382} | 50%: ${t.fib500} | 61.8%: ${t.fib618} | 78.6%: ${t.fib786}
-  Price at: ${t.fibLabel}
-  ${t.nearGoldenZone ? '🎯 GOLDEN ZONE - highest probability reversal zone' : t.nearFibAny ? '📍 At fib level - good confluence' : 'Not at key fib level'}
+FIB: 38.2%=${t.fib382} 50%=${t.fib500} 61.8%=${t.fib618} 78.6%=${t.fib786}
+  ${t.nearGoldenZone ? '🎯 GOLDEN ZONE 61.8-78.6%' : t.nearFibAny ? '📍 At fib level' : 'Not at fib level'}
 
-SCORES: S&R: ${t.srScore}/25 (${t.srDir}) | EMA: ${t.emaScore}/25 (${t.emaDir}) | RSI: ${t.rsiScore}/25 (${t.rsiDir}) | ICT: ${t.ictScore}/25 (${t.ictDir})
-Total: ${t.totalScore}/100
+Score: ${t.totalScore}/100 (S&R=${t.srScore} EMA=${t.emaScore} RSI=${t.rsiScore} PA=${t.ictScore})
 
 --- ADVANCED FILTERS ---
-ATR Volatility: ${t.atrLabel} | ATR 1H: ${t.atr1h||'N/A'} (${t.atrPct||'N/A'}% of price)
--> ${t.atrOk ? '✅ Volatility normal - entry valid' : '⛔ Volatility filter FAILED - consider WAIT'}
+ATR: ${t.atrLabel}
 
-Order Blocks 1H:
-  Bull OB zone: ${t.bullOB ? t.bullOB.bottom+' -> '+t.bullOB.top : 'none detected'}  | Price in Bull OB: ${t.nearBullOB}
-  Bear OB zone: ${t.bearOB ? t.bearOB.bottom+' -> '+t.bearOB.top : 'none detected'}  | Price in Bear OB: ${t.nearBearOB}
--> ${t.nearBullOB ? '✅ Price in Bull Order Block - strong buy zone' : t.nearBearOB ? '✅ Price in Bear Order Block - strong sell zone' : 'Price not in OB zone'}
+OB: Bull=${t.nearBullOB} Bear=${t.nearBearOB} ${t.nearBullOB?'✅ Bull OB':t.nearBearOB?'✅ Bear OB':'no OB'}
 
 Candle Momentum 15m: ${t.candlesLabel} (${t.candlesCount}/3 strong)
 -> ${t.candlesLevel === 'strong' ? '✅ Strong momentum - confirms entry' : t.candlesLevel === 'neutral' ? '⚠️ Neutral momentum - valid but be cautious' : '❌ Weak momentum - consider WAIT'}
@@ -2099,7 +2077,7 @@ Reply ONLY in raw JSON no markdown:
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 1500,
+        max_tokens: 800,
         temperature: 0.3,
         response_format: { type: 'json_object' },
       }),
@@ -2332,7 +2310,7 @@ async function init() {
         // Check if SL already hit (price past SL level)
         const pairObj = PAIRS.find(p => p.label === trade.pair);
         const startupPrice = prices[pairObj?.key];
-        if (currentPrice && trade.sl) {
+        if (startupPrice && trade.sl) {
           const isBuy = trade.signal === 'BUY';
           const slHit = isBuy ? startupPrice <= parseFloat(trade.sl) : startupPrice >= parseFloat(trade.sl);
           if (slHit) {
