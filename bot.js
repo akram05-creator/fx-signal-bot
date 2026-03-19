@@ -553,6 +553,7 @@ const liveCandle = {};
 let   lastSig    = {};   // lastSig[key] = { sig, time } - reset after 2h
 let   calEvents  = [];
 let   calBlocked = false;
+const sentNewsAlerts = new Set(); // track sent news alerts (avoid duplicates)
 
 // --- Utils --------------------------------------------------
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -1923,10 +1924,72 @@ async function fetchCalendar() {
       return diff > -15 * 60000 && diff < 30 * 60000;
     });
     log(`[CAL] Calendar: ${calEvents.length} events today - blocked: ${calBlocked}`);
-    // Log high impact events for visibility
+    // Log high impact events
     const highEvents = calEvents.filter(e => e.impact === 'High');
     if (highEvents.length > 0) {
       log(`[CAL] HIGH IMPACT today: ${highEvents.map(e => e.country+' '+e.title).join(' | ')}`);
+    }
+
+    // Send Telegram alert for HIGH impact news that just released (has actual result)
+    const nowCheck = Date.now();
+    for (const e of calEvents) {
+      if (e.impact !== 'High') continue;
+      if (!e.actual) continue; // no result yet
+      
+      const eventMs = new Date(e.date).getTime();
+      const diffMin = (nowCheck - eventMs) / 60000;
+      if (diffMin < 0 || diffMin > 10) continue; // only 0-10min after release
+      
+      const alertKey = `${e.country}_${e.title}_${e.date}`;
+      if (sentNewsAlerts.has(alertKey)) continue; // already sent
+      sentNewsAlerts.add(alertKey);
+      
+      // Determine sentiment
+      const act = parseFloat(e.actual);
+      const fore = parseFloat(e.forecast);
+      const prev = parseFloat(e.previous);
+      let sentiment = '', impact_pairs = '', emoji = '';
+      
+      const isBeat = !isNaN(act) && !isNaN(fore) && act > fore;
+      const isMiss = !isNaN(act) && !isNaN(fore) && act < fore;
+      
+      if (e.country === 'USD') {
+        if (isBeat) { sentiment = '📈 USD POSITIF'; emoji = '🟢'; impact_pairs = 'USD/JPY ↑ | EUR/USD ↓ | GBP/USD ↓ | XAU/USD ↓'; }
+        else if (isMiss) { sentiment = '📉 USD NÉGATIF'; emoji = '🔴'; impact_pairs = 'USD/JPY ↓ | EUR/USD ↑ | GBP/USD ↑ | XAU/USD ↑'; }
+        else { sentiment = '➡️ USD NEUTRE'; emoji = '⚪'; impact_pairs = 'Impact limité'; }
+      } else if (e.country === 'EUR') {
+        if (isBeat) { sentiment = '📈 EUR POSITIF'; emoji = '🟢'; impact_pairs = 'EUR/USD ↑'; }
+        else if (isMiss) { sentiment = '📉 EUR NÉGATIF'; emoji = '🔴'; impact_pairs = 'EUR/USD ↓'; }
+        else { sentiment = '➡️ EUR NEUTRE'; emoji = '⚪'; impact_pairs = 'Impact limité'; }
+      } else if (e.country === 'GBP') {
+        if (isBeat) { sentiment = '📈 GBP POSITIF'; emoji = '🟢'; impact_pairs = 'GBP/USD ↑'; }
+        else if (isMiss) { sentiment = '📉 GBP NÉGATIF'; emoji = '🔴'; impact_pairs = 'GBP/USD ↓'; }
+        else { sentiment = '➡️ GBP NEUTRE'; emoji = '⚪'; impact_pairs = 'Impact limité'; }
+      } else if (e.country === 'JPY') {
+        if (isBeat) { sentiment = '📈 JPY POSITIF'; emoji = '🟢'; impact_pairs = 'USD/JPY ↓'; }
+        else if (isMiss) { sentiment = '📉 JPY NÉGATIF'; emoji = '🔴'; impact_pairs = 'USD/JPY ↑'; }
+        else { sentiment = '➡️ JPY NEUTRE'; emoji = '⚪'; impact_pairs = 'Impact limité'; }
+      }
+
+      if (!sentiment) continue;
+
+      const resultLine = !isNaN(act) && !isNaN(fore) 
+        ? `Actuel: <b>${e.actual}</b> | Prévision: ${e.forecast}${e.previous ? ' | Précédent: '+e.previous : ''}`
+        : `Résultat: <b>${e.actual}</b>${e.previous ? ' | Précédent: '+e.previous : ''}`;
+
+      await sendTelegramMsg(
+`📰 <b>NEWS RELEASE — ${e.country}</b>
+-------------------
+⏰ ${utcTime()}
+🔴 <b>${e.title}</b>
+${resultLine}
+
+${emoji} ${sentiment}
+📊 Impact marché: ${impact_pairs}
+-------------------
+⚠️ Volatilité possible — attendez stabilisation
+#News #${e.country} #FXSignalPro`);
+      log(`[CAL] News alert sent: ${e.country} ${e.title} → ${sentiment}`);
     }
 
     // Save f Supabase bach Vercel y9ra (mashi bloqué f browser) [OK]
@@ -2162,8 +2225,38 @@ async function runScan() {
   const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const dayContext = days[nowDay];
 
+  const nowMs2 = Date.now();
   const newsContext = calEvents.length
-    ? calEvents.slice(0, 5).map(e => `${e.impact === 'High' ? '🔴' : e.impact === 'Medium' ? '🟡' : '🟢'} ${e.currency} ${e.title} @ ${new Date(e.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}`).join('\n')
+    ? calEvents.slice(0, 8).map(e => {
+        const icon = e.impact === 'High' ? '🔴' : e.impact === 'Medium' ? '🟡' : '🟢';
+        const time = new Date(e.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+        const eventMs = new Date(e.date).getTime();
+        const diffMin = Math.round((nowMs2 - eventMs) / 60000);
+        // Show result if event passed (actual vs forecast)
+        let result = '';
+        if (eventMs < nowMs2) {
+          // Event passed
+          if (e.actual && e.forecast) {
+            const act = parseFloat(e.actual);
+            const fore = parseFloat(e.forecast);
+            if (!isNaN(act) && !isNaN(fore)) {
+              result = act > fore ? ` → Actual: ${e.actual} vs Forecast: ${e.forecast} ✅ BEAT` :
+                       act < fore ? ` → Actual: ${e.actual} vs Forecast: ${e.forecast} ❌ MISS` :
+                       ` → Actual: ${e.actual} vs Forecast: ${e.forecast} ➡️ IN LINE`;
+            } else if (e.actual) {
+              result = ` → Actual: ${e.actual}${e.forecast ? ' (forecast: '+e.forecast+')' : ''}`;
+            }
+          } else if (e.actual) {
+            result = ` → Result: ${e.actual}`;
+          } else {
+            result = ` → (${diffMin}min ago, no result yet)`;
+          }
+        } else {
+          const minsUntil = Math.round((eventMs - nowMs2) / 60000);
+          result = minsUntil <= 30 ? ` ⚠️ IN ${minsUntil}min` : ` (in ${minsUntil}min)`;
+        }
+        return `${icon} ${e.country} ${e.title} @ ${time}${result}`;
+      }).join('\n')
     : 'No major news today';
 
   const prompt = `You are a senior forex trader with 15 years experience. You are the SOLE decision maker - think and decide like a real trader, not a mechanical system.
