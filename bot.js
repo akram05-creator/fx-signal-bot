@@ -1916,6 +1916,12 @@ async function fetchCalendar() {
       return diff > -15 * 60000 && diff < 30 * 60000;
     });
     log(`[CAL] Calendar: ${calEvents.length} events today - blocked: ${calBlocked}`);
+    if (calEvents.length === 0 && data.length > 0) {
+      // Debug: show first 3 events to understand date format
+      const sample = data.slice(0, 3).map(e => `${e.currency} ${e.date} ${e.title}`).join(' | ');
+      log(`[CAL] Debug - Total in feed: ${data.length} | Sample: ${sample}`);
+      log(`[CAL] Debug - todayUTC=${todayUTC} todayEST=${todayEST} todayISO=${todayISO8}`);
+    }
 
     // Save f Supabase bach Vercel y9ra (mashi bloqué f browser) [OK]
     try{
@@ -2371,10 +2377,15 @@ Reply ONLY in raw JSON no markdown:
     // Si AI dit BUY/SELL -> on envoie. Si AI dit WAIT -> on skip.
     if (!isBuy && !isSell) { log(`-> AI dit WAIT - skip`); return; }
 
-    // [BLOCK] ATR HARD BLOCK
+    // [BLOCK] ATR HARD BLOCK — Gold exception (always volatile)
     if (!t.atrOk) {
-      log(`[BLOCK] ATR hard block [${best.label}]: ${t.atrLabel} - signal annulé`);
-      return;
+      if (best.dec === 2) {
+        // Gold — warning only, not hard block
+        log(`[WARN] ATR élevé Gold [${best.label}]: ${t.atrLabel} - signal autorisé avec SL large`);
+      } else {
+        log(`[BLOCK] ATR hard block [${best.label}]: ${t.atrLabel} - signal annulé`);
+        return;
+      }
     }
 
     // [BLOCK] MOMENTUM WEAK = block signal (0/3 strong candles)
