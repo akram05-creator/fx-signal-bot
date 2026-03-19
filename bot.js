@@ -964,15 +964,18 @@ function findNextSRLevels(candles1h, candles4h, price, isBuy) {
   return deduped.slice(0, 5);
 }
 
-function calcStructuredSLTP(candles1h, candles15m, candles4h, price, isBuy, dec) {
+function calcStructuredSLTP(candles1h, candles15m, candles4h, price, isBuy, dec, atrValue=null) {
   const pip    = dec===2 ? 0.10 : dec===3 ? 0.01 : 0.0001;
   const minSL  = pip * (dec===2 ? 80 : 8);
   const c15    = candles15m.slice(-20);
   const swH15  = c15.length ? Math.max(...c15.map(x=>x.h)) : price;
   const swL15  = c15.length ? Math.min(...c15.map(x=>x.l)) : price;
+
+  // ATR-aware SL: ila ATR kbir → SL ytb3ed (buffer = 1.5× ATR)
+  const atrBuffer = atrValue ? atrValue * 1.5 : pip * 2;
   const sl     = isBuy
-    ? Math.min(swL15 - pip*2, price - minSL)
-    : Math.max(swH15 + pip*2, price + minSL);
+    ? Math.min(swL15 - atrBuffer, price - minSL)
+    : Math.max(swH15 + atrBuffer, price + minSL);
   const slDist = Math.abs(price - sl);
   const nextLevels = findNextSRLevels(candles1h, candles4h, price, isBuy);
 
@@ -1043,11 +1046,13 @@ function atrFilter(candles1h, price, dec) {
   const atrPct = (atr / price) * 100;
   // Dead market: ATR < 0.03% price -> no movement
   // Spike/news: ATR > 0.35% price -> too risky
+  // Threshold per pair: Gold = more volatile by nature
+  const spikeThreshold = dec === 2 ? 0.60 : 0.35; // Gold(dec=2)=0.60%, others=0.35%
   const dead  = atrPct < 0.03;
-  const spike = atrPct > 0.35;
+  const spike = atrPct > spikeThreshold;
   const ok    = !dead && !spike;
-  const label = dead ? '😴 Marché mort (ATR trop bas)' : spike ? '⚡ Spike/News (ATR trop élevé)' : `✅ ATR normal (${atrPct.toFixed(3)}%)`;
-  return { ok, label, atr: parseFloat(atr.toFixed(dec+1)), atrPct: parseFloat(atrPct.toFixed(4)) };
+  const label = dead ? '😴 Marché mort (ATR trop bas)' : spike ? `⚡ Spike/News (ATR trop élevé ${atrPct.toFixed(3)}%)` : `✅ ATR normal (${atrPct.toFixed(3)}%)`;
+  return { ok, label, atr: parseFloat(atr.toFixed(dec+1)), atrPct: parseFloat(atrPct.toFixed(4)), spikeThreshold };
 }
 
 // --- Order Blocks (LuxAlgo ICT method) -----------------------
@@ -1691,7 +1696,7 @@ function computeTechnicals(key) {
   const isBuyDir  = finalDir === 'haussier' || finalDir === 'haussier_lean';
   const isSellDir = finalDir === 'baissier' || finalDir === 'baissier_lean';
   const structuredLevels = (isBuyDir||isSellDir) && m15.length>=6 && h1.length>=20
-    ? calcStructuredSLTP(h1, m15, h4, price, isBuyDir, dec)
+    ? calcStructuredSLTP(h1, m15, h4, price, isBuyDir, dec, atr1h)
     : null;
 
   return {
@@ -1987,7 +1992,9 @@ ${probLabel}
 📊 <b>Score:</b> ${score}/100 | <b>RR:</b> ${rr} | <b>Conf:</b> ${conf}%
 ${lotCalc}
 🔬 <b>Filters:</b>
-  📊 ATR: ${t ? t.atrLabel : '-'}
+  📊 ATR: ${t ? t.atrLabel : '-'}${t && t.atrPct > (t.dec === 2 ? 0.40 : 0.25) ? `
+⚠️ <b>ATR ÉLEVÉ — SL élargi automatiquement</b>
+   Respectez le Risk Calculator ci-dessous 👇` : ''}
   🕯️ Momentum: ${t ? t.candlesLabel : '-'}
   🧱 OB: ${t ? (t.nearBullOB ? '✅ Bull OB zone' : t.nearBearOB ? '✅ Bear OB zone' : '-') : '-'}
 -----------------
@@ -2340,7 +2347,7 @@ Reply ONLY in raw JSON no markdown:
     // Recalculate structuredLevels based on AI final direction (not score direction)
     // This fixes the bug where score=haussier but AI=SELL -> wrong TPs
     const aiStructured = (candles[best.key]?.h1?.length >= 20 && candles[best.key]?.m15?.length >= 6)
-      ? calcStructuredSLTP(candles[best.key].h1, candles[best.key].m15, candles[best.key].h4||[], t.price, isBuy, best.dec)
+      ? calcStructuredSLTP(candles[best.key].h1, candles[best.key].m15, candles[best.key].h4||[], t.price, isBuy, best.dec, t.atr1h)
       : null;
 
     if(aiStructured){
