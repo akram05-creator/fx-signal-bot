@@ -11,7 +11,9 @@ const TD_KEY2  = process.env.TD_KEY2  || 'c6f15065c04c4a5a94722b40a297dd0f';
 const TD_KEY3  = process.env.TD_KEY3  || 'a459b1e8d10240f2bff8dcb67e2ed5b6';
 const TD_KEY4  = process.env.TD_KEY4  || 'c7ccc7b36d7b4fa3a1b16b7860196049';
 const POLY_KEY = process.env.POLY_KEY || 'Vxe1pa2pDsqR2wt5XguyxYOH68DwTiKi';
-const GROQ_KEY = process.env.GROQ_KEY || '';
+const GROQ_KEY  = process.env.GROQ_KEY  || '';
+const GROQ_KEY2 = process.env.GROQ_KEY2 || ''; // second key for rotation
+let groqKeyIndex = 0; // rotate between keys
 const TG_TOKEN = process.env.TG_TOKEN || '8427595283:AAFaoATV4Cq-45Fq_eruMLRFaJsOrCt6Ceo';
 const TG_CHAT  = process.env.TG_CHAT  || '-1003612566723';
 const SB_URL   = process.env.SUPABASE_URL || 'https://ugbowhydxxkpsamjxxai.supabase.co';
@@ -1851,7 +1853,7 @@ async function runScan() {
   const lastScore = lastAIScore[pairKey2];
   const scoreChanged = lastScore !== t.totalScore;
   const timeSinceCall = now_ai - lastCall;
-  const MIN_INTERVAL_MS = 25 * 60 * 1000; // 25 min fallback
+  const MIN_INTERVAL_MS = 15 * 60 * 1000; // 15 min = 1 candle
 
   // Call AI if: score changed (INSTANT) OR 5min passed
   if (!scoreChanged && timeSinceCall < MIN_INTERVAL_MS) {
@@ -2073,7 +2075,7 @@ Reply ONLY in raw JSON no markdown:
   try {
     const res  = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_KEY}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKeyIndex++ % 2 === 0 ? GROQ_KEY : (GROQ_KEY2 || GROQ_KEY)}` },
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
