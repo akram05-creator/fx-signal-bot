@@ -1891,7 +1891,13 @@ async function fetchAllCandles() {
 async function fetchCalendar() {
   try {
     // Railway = server-side - direct fetch mashi bloqué [OK]
-    const url = `https://nfs.faireconomy.media/ff_calendar_thisweek.json`;
+    // Try current week first, fallback to next week
+    const nowDay = new Date().getUTCDay();
+    // If Friday after 21h or weekend, use next week
+    const useNext = (nowDay === 5 && new Date().getUTCHours() >= 21) || nowDay === 6 || nowDay === 0;
+    const url = useNext 
+      ? 'https://nfs.faireconomy.media/ff_calendar_nextweek.json'
+      : 'https://nfs.faireconomy.media/ff_calendar_thisweek.json';
     const res  = await fetch(url);
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data = await res.json();
@@ -1916,11 +1922,12 @@ async function fetchCalendar() {
       return diff > -15 * 60000 && diff < 30 * 60000;
     });
     log(`[CAL] Calendar: ${calEvents.length} events today - blocked: ${calBlocked}`);
-    if (calEvents.length === 0 && data.length > 0) {
-      // Debug: show first 3 events to understand date format
-      const sample = data.slice(0, 3).map(e => `${e.currency} ${e.date} ${e.title}`).join(' | ');
-      log(`[CAL] Debug - Total in feed: ${data.length} | Sample: ${sample}`);
-      log(`[CAL] Debug - todayUTC=${todayUTC} todayEST=${todayEST} todayISO=${todayISO8}`);
+    if (data.length > 0) {
+      // Debug: show actual field names
+      const first = data[0];
+      const fields = Object.keys(first).join(', ');
+      log(`[CAL] Debug - Fields: ${fields}`);
+      log(`[CAL] Debug - First event: ${JSON.stringify(first)}`);
     }
 
     // Save f Supabase bach Vercel y9ra (mashi bloqué f browser) [OK]
