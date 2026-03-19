@@ -326,6 +326,13 @@ ${isBuy ?
   `→ SELL trail: move SL to last 4H lower high = ${lastSwingHigh4h?.toFixed(dec)} (only if < current SL ${fmt(sl)})`
 }
 
+SR CHANNELS (TradingView method — pivot clusters):
+Resistances: ${t.srResistances.length ? t.srResistances.map(z => `${z.lo}-${z.hi}(s:${z.strength})`).join(' | ') : 'none'}
+Supports:    ${t.srSupports.length ? t.srSupports.map(z => `${z.lo}-${z.hi}(s:${z.strength})`).join(' | ') : 'none'}
+${t.nearSRZone ? `⚠️ Price INSIDE SR zone ${t.srInside?.[0]?.lo}-${t.srInside?.[0]?.hi} — caution, wait for breakout or rejection` : ''}
+${t.closestRes ? `Next resistance: ${t.closestRes.lo}-${t.closestRes.hi}` : ''}
+${t.closestSup ? `Next support: ${t.closestSup.lo}-${t.closestSup.hi}` : ''}
+
 1H CONFIRMATION:
 Structure 1H: ${t.struct1h} | RSI: ${t.rsi||'N/A'}
 EMA: ${t.emaDir} | Score: ${t.totalScore}/100
@@ -1043,72 +1050,165 @@ function atrFilter(candles1h, price, dec) {
   return { ok, label, atr: parseFloat(atr.toFixed(dec+1)), atrPct: parseFloat(atrPct.toFixed(4)) };
 }
 
-// --- Order Blocks --------------------------------------------
-// VALID OB = last bearish/bullish candle + 3 strong candles after + displacement
-// Displacement = move > 1.5x the OB candle body size
+// --- Order Blocks (LuxAlgo ICT method) -----------------------
+// Bullish OB: BOS bull → find lowest candle before swing high
+// Bearish OB: BOS bear → find highest candle before swing low
 function findOrderBlocks(candles1h, price, dec) {
-  const c = candles1h.slice(-60);
-  if (c.length < 10) return { bullOB: null, bearOB: null, nearBullOB: false, nearBearOB: false };
+  const bars = candles1h.slice(-Math.min(200, candles1h.length));
+  const n = bars.length;
+  const swingLen = 10;
+
+  // Find swing highs and lows
+  const swingHighs = [], swingLows = [];
+  for (let i = swingLen; i < n - swingLen; i++) {
+    let isHigh = true, isLow = true;
+    for (let j = i - swingLen; j <= i + swingLen; j++) {
+      if (j !== i) {
+        if (bars[j].h >= bars[i].h) isHigh = false;
+        if (bars[j].l <= bars[i].l) isLow  = false;
+      }
+    }
+    if (isHigh) swingHighs.push({ idx: i, level: bars[i].h });
+    if (isLow)  swingLows.push ({ idx: i, level: bars[i].l });
+  }
 
   let bullOB = null, bearOB = null;
 
-  for (let i = 1; i < c.length - 4; i++) {
-    const ob    = c[i];
-    const next1 = c[i+1], next2 = c[i+2], next3 = c[i+3];
-
-    // -- Bullish OB --
-    // Condition 1: OB candle is bearish (red)
-    const isBearOB = ob.c < ob.o;
-    const obBearBody = ob.o - ob.c;
-
-    if (isBearOB && obBearBody > 0) {
-      // Condition 2: next 3 candles all bullish
-      const allBull = next1.c > next1.o && next2.c > next2.o && next3.c > next3.o;
-      // Condition 3: each bull candle has body > 60% of range (strong)
-      const bull1Strong = (next1.c - next1.o) / (next1.h - next1.l || 1) > 0.6;
-      const bull2Strong = (next2.c - next2.o) / (next2.h - next2.l || 1) > 0.6;
-      const bull3Strong = (next3.c - next3.o) / (next3.h - next3.l || 1) > 0.6;
-      // Condition 4: displacement = total move of 3 candles > 1.5x OB body
-      const displacement = next3.c - ob.c;
-      const hasDisplacement = displacement > obBearBody * 1.5;
-
-      if (allBull && (bull1Strong || bull2Strong) && bull3Strong && hasDisplacement) {
-        bullOB = { top: ob.o, bottom: ob.l };
+  // Bullish OB: price breaks above last swing high → OB = candle with lowest low before BOS
+  if (swingHighs.length > 0) {
+    const lastSwingHigh = swingHighs[swingHighs.length - 1];
+    const lastBar = bars[n - 1];
+    if (lastBar.c > lastSwingHigh.level) {
+      // BOS bullish confirmed — find OB candle (lowest low before swing high)
+      let minLow = Infinity, obIdx = lastSwingHigh.idx;
+      for (let i = Math.max(0, lastSwingHigh.idx - 20); i < lastSwingHigh.idx; i++) {
+        if (bars[i].l < minLow) { minLow = bars[i].l; obIdx = i; }
       }
-    }
-
-    // -- Bearish OB --
-    // Condition 1: OB candle is bullish (green)
-    const isBullOB = ob.c > ob.o;
-    const obBullBody = ob.c - ob.o;
-
-    if (isBullOB && obBullBody > 0) {
-      // Condition 2: next 3 candles all bearish
-      const allBear = next1.c < next1.o && next2.c < next2.o && next3.c < next3.o;
-      // Condition 3: each bear candle has body > 60% of range (strong)
-      const bear1Strong = (next1.o - next1.c) / (next1.h - next1.l || 1) > 0.6;
-      const bear2Strong = (next2.o - next2.c) / (next2.h - next2.l || 1) > 0.6;
-      const bear3Strong = (next3.o - next3.c) / (next3.h - next3.l || 1) > 0.6;
-      // Condition 4: displacement = total move > 1.5x OB body
-      const displacement = ob.c - next3.c;
-      const hasDisplacement = displacement > obBullBody * 1.5;
-
-      if (allBear && (bear1Strong || bear2Strong) && bear3Strong && hasDisplacement) {
-        bearOB = { top: ob.h, bottom: ob.c };
+      const ob = bars[obIdx];
+      const obTop = Math.max(ob.o, ob.c);
+      const obBtm = ob.l;
+      const isBreaker = price < obBtm; // price broke below OB = breaker block
+      if (!isBreaker) {
+        bullOB = {
+          top:    parseFloat(obTop.toFixed(dec)),
+          bottom: parseFloat(obBtm.toFixed(dec)),
+          breaker: false
+        };
       }
     }
   }
 
-  // Price inside OB zone = retrace back into the OB
+  // Bearish OB: price breaks below last swing low → OB = candle with highest high before BOS
+  if (swingLows.length > 0) {
+    const lastSwingLow = swingLows[swingLows.length - 1];
+    const lastBar = bars[n - 1];
+    if (lastBar.c < lastSwingLow.level) {
+      // BOS bearish confirmed — find OB candle (highest high before swing low)
+      let maxHigh = -Infinity, obIdx = lastSwingLow.idx;
+      for (let i = Math.max(0, lastSwingLow.idx - 20); i < lastSwingLow.idx; i++) {
+        if (bars[i].h > maxHigh) { maxHigh = bars[i].h; obIdx = i; }
+      }
+      const ob = bars[obIdx];
+      const obTop = ob.h;
+      const obBtm = Math.min(ob.o, ob.c);
+      const isBreaker = price > obTop; // price broke above OB = breaker block
+      if (!isBreaker) {
+        bearOB = {
+          top:    parseFloat(obTop.toFixed(dec)),
+          bottom: parseFloat(obBtm.toFixed(dec)),
+          breaker: false
+        };
+      }
+    }
+  }
+
   const nearBullOB = bullOB ? price >= bullOB.bottom * 0.9995 && price <= bullOB.top * 1.0005 : false;
   const nearBearOB = bearOB ? price >= bearOB.bottom * 0.9995 && price <= bearOB.top * 1.0005 : false;
 
-  return {
-    bullOB: bullOB ? { top: bullOB.top.toFixed(dec), bottom: bullOB.bottom.toFixed(dec) } : null,
-    bearOB: bearOB ? { top: bearOB.top.toFixed(dec), bottom: bearOB.bottom.toFixed(dec) } : null,
-    nearBullOB,
-    nearBearOB,
-  };
+  return { bullOB, bearOB, nearBullOB, nearBearOB };
+}
+
+// --- Liquidity Zones (LuxAlgo ICT method) --------------------
+// Buyside liq  = cluster of 3+ swing HIGHS within ATR/4 (equal highs = buy stops)
+// Sellside liq = cluster of 3+ swing LOWS  within ATR/4 (equal lows  = sell stops)
+function findLiquidityZones(candles1h, price, dec) {
+  const bars = candles1h.slice(-Math.min(200, candles1h.length));
+  const n = bars.length;
+  const swingLen = 5;
+
+  // ATR for margin
+  let atr = 0;
+  for (let i = 1; i < Math.min(15, n); i++) {
+    atr += Math.max(bars[i].h - bars[i].l,
+      Math.abs(bars[i].h - bars[i-1].c),
+      Math.abs(bars[i].l - bars[i-1].c));
+  }
+  atr /= 14;
+  const margin = atr / 4;
+
+  // Find swing highs and lows
+  const swingHighs = [], swingLows = [];
+  for (let i = swingLen; i < n - swingLen; i++) {
+    let isHigh = true, isLow = true;
+    for (let j = i - swingLen; j <= i + swingLen; j++) {
+      if (j !== i) {
+        if (bars[j].h >= bars[i].h) isHigh = false;
+        if (bars[j].l <= bars[i].l) isLow  = false;
+      }
+    }
+    if (isHigh) swingHighs.push(bars[i].h);
+    if (isLow)  swingLows.push (bars[i].l);
+  }
+
+  // Find buyside liquidity clusters (equal highs)
+  let buysideLiq = null;
+  if (swingHighs.length >= 3) {
+    // Sort descending, find cluster
+    const sorted = [...swingHighs].sort((a, b) => b - a);
+    for (let i = 0; i < sorted.length - 2; i++) {
+      const count = sorted.filter(h => Math.abs(h - sorted[i]) <= margin).length;
+      if (count >= 3) {
+        const cluster = sorted.filter(h => Math.abs(h - sorted[i]) <= margin);
+        const clusterMid = cluster.reduce((a, b) => a + b, 0) / cluster.length;
+        if (clusterMid > price) { // above price = buyside (buy stops)
+          buysideLiq = {
+            level: parseFloat(clusterMid.toFixed(dec)),
+            top:   parseFloat((clusterMid + margin).toFixed(dec)),
+            bottom:parseFloat((clusterMid - margin).toFixed(dec)),
+            count
+          };
+          break;
+        }
+      }
+    }
+  }
+
+  // Find sellside liquidity clusters (equal lows)
+  let sellsideLiq = null;
+  if (swingLows.length >= 3) {
+    const sorted = [...swingLows].sort((a, b) => a - b);
+    for (let i = 0; i < sorted.length - 2; i++) {
+      const count = sorted.filter(l => Math.abs(l - sorted[i]) <= margin).length;
+      if (count >= 3) {
+        const cluster = sorted.filter(l => Math.abs(l - sorted[i]) <= margin);
+        const clusterMid = cluster.reduce((a, b) => a + b, 0) / cluster.length;
+        if (clusterMid < price) { // below price = sellside (sell stops)
+          sellsideLiq = {
+            level: parseFloat(clusterMid.toFixed(dec)),
+            top:   parseFloat((clusterMid + margin).toFixed(dec)),
+            bottom:parseFloat((clusterMid - margin).toFixed(dec)),
+            count
+          };
+          break;
+        }
+      }
+    }
+  }
+
+  const nearBuyside  = buysideLiq  ? Math.abs(price - buysideLiq.level)  / price < 0.005 : false;
+  const nearSellside = sellsideLiq ? Math.abs(price - sellsideLiq.level) / price < 0.005 : false;
+
+  return { buysideLiq, sellsideLiq, nearBuyside, nearSellside };
 }
 
 // --- Candle Momentum Filter ----------------------------------
@@ -1148,6 +1248,94 @@ function candleStrength(candles15m, direction) {
     : `❌ Momentum faible - 0/3 bougies ${dirLabel} solides`;
 
   return { strong, level, strongCount, label };
+}
+
+
+// --- SR Channels (TradingView "Support Resistance Channels" logic) ---
+// Based on: pivot points + channel grouping + strength scoring
+function findSRChannels(candles1h, price, dec, pivotPeriod = 10, maxChannels = 6, loopback = 290) {
+  if (!candles1h || candles1h.length < pivotPeriod * 2 + 1) return [];
+
+  const bars = candles1h.slice(-Math.min(loopback, candles1h.length));
+  const n = bars.length;
+
+  // Channel width = 5% of (highest - lowest) in last 300 bars
+  const highest = Math.max(...bars.map(b => b.h));
+  const lowest  = Math.min(...bars.map(b => b.l));
+  const cwidth  = (highest - lowest) * 0.05;
+
+  // Find pivot highs and lows (period = 10 each side)
+  const pivots = [];
+  for (let i = pivotPeriod; i < n - pivotPeriod; i++) {
+    const bar = bars[i];
+    // Pivot High
+    let isHigh = true;
+    for (let j = i - pivotPeriod; j <= i + pivotPeriod; j++) {
+      if (j !== i && bars[j].h >= bar.h) { isHigh = false; break; }
+    }
+    if (isHigh) pivots.push({ level: bar.h, idx: i });
+
+    // Pivot Low
+    let isLow = true;
+    for (let j = i - pivotPeriod; j <= i + pivotPeriod; j++) {
+      if (j !== i && bars[j].l <= bar.l) { isLow = false; break; }
+    }
+    if (isLow) pivots.push({ level: bar.l, idx: i });
+  }
+
+  if (!pivots.length) return [];
+
+  // Group pivots into SR zones
+  const zones = [];
+  for (let i = 0; i < pivots.length; i++) {
+    let lo = pivots[i].level;
+    let hi = lo;
+    let strength = 0;
+
+    for (let j = 0; j < pivots.length; j++) {
+      const cpp = pivots[j].level;
+      const wdth = cpp <= hi ? hi - cpp : cpp - lo;
+      if (wdth <= cwidth) {
+        lo = Math.min(lo, cpp);
+        hi = Math.max(hi, cpp);
+        strength += 20; // each pivot = +20
+      }
+    }
+
+    // Add touch count (candles touching the zone)
+    for (let b = 0; b < n; b++) {
+      if ((bars[b].h <= hi && bars[b].h >= lo) ||
+          (bars[b].l <= hi && bars[b].l >= lo)) {
+        strength += 1;
+      }
+    }
+
+    zones.push({ hi, lo, strength });
+  }
+
+  // Sort by strength descending
+  zones.sort((a, b) => b.strength - a.strength);
+
+  // Deduplicate: remove zones that overlap
+  const final = [];
+  for (const zone of zones) {
+    const overlap = final.some(z =>
+      (zone.lo <= z.hi && zone.hi >= z.lo)
+    );
+    if (!overlap && zone.strength >= 40) { // min 2 pivots
+      final.push(zone);
+    }
+    if (final.length >= maxChannels) break;
+  }
+
+  // Label each zone
+  return final.map(z => ({
+    hi:  parseFloat(z.hi.toFixed(dec)),
+    lo:  parseFloat(z.lo.toFixed(dec)),
+    mid: parseFloat(((z.hi + z.lo) / 2).toFixed(dec)),
+    strength: z.strength,
+    type: price > z.hi ? 'support' : price < z.lo ? 'resistance' : 'inside',
+  }));
 }
 
 // --- Compute Technicals -------------------------------------
@@ -1203,6 +1391,16 @@ function computeTechnicals(key) {
   const struct1h = getSwingStructure(h1.slice(-20));
   const sr1h   = findSR(h1, 50);
   const sr4h   = findSR(h4, 30);
+
+  // SR Channels (TradingView logic — pivot clusters + strength)
+  const srChannels = findSRChannels(h1, price, dec);
+  const srResistances = srChannels.filter(z => z.type === 'resistance').slice(0, 3);
+  const srSupports    = srChannels.filter(z => z.type === 'support').slice(0, 3);
+  const srInside      = srChannels.filter(z => z.type === 'inside');
+  const nearSRZone    = srInside.length > 0;
+  const nearSRStrong  = srInside.some(z => z.strength >= 100);
+  const closestRes    = srResistances[0] || null;
+  const closestSup    = srSupports[0]    || null;
 
   // 15m
   const rsi15m = closes15m.length >= 15 ? calcRSI(closes15m, 14) : null;
@@ -1395,12 +1593,19 @@ function computeTechnicals(key) {
   const atrOk   = atrData.ok;
   const atrLabel = atrData.label;
 
-  // -- Order Blocks --
+  // -- Order Blocks (LuxAlgo ICT method) --
   const obData     = findOrderBlocks(h1, price, dec);
   const nearBullOB = obData.nearBullOB;
   const nearBearOB = obData.nearBearOB;
   const bullOB     = obData.bullOB;
   const bearOB     = obData.bearOB;
+
+  // -- Liquidity Zones (LuxAlgo ICT method) --
+  const liqData      = findLiquidityZones(h1, price, dec);
+  const buysideLiq   = liqData.buysideLiq;
+  const sellsideLiq  = liqData.sellsideLiq;
+  const nearBuyside  = liqData.nearBuyside;
+  const nearSellside = liqData.nearSellside;
 
   // -- Candle Strength Filter --
   const csDir    = struct15m === 'haussier' ? 'bull' : 'bear';
@@ -1499,9 +1704,11 @@ function computeTechnicals(key) {
     struct15m, bos15m_bull, bos15m_bear, emaCross15m_bull, emaCross15m_bear,
     sr15mHigh: sr15m.recentHigh.toFixed(dec), sr15mLow: sr15m.recentLow.toFixed(dec),
     nearSupport, nearResistance,
+    srChannels, srResistances, srSupports, nearSRZone, nearSRStrong, closestRes, closestSup,
     support4h: sr4h.support.toFixed(dec), resistance4h: sr4h.resistance.toFixed(dec),
     prevDayHigh: prevDayHigh?.toFixed(dec)||null, prevDayLow: prevDayLow?.toFixed(dec)||null,
     eqHigh, eqLow, liqSweepBull, liqSweepBear, nearPDH, nearPDL, liqBull, liqBear,
+    buysideLiq, sellsideLiq, nearBuyside, nearSellside,
     recentHigh: sr1h.recentHigh.toFixed(dec), recentLow: sr1h.recentLow.toFixed(dec),
     bos_bull, bos_bear, fvg_bull, fvg_bear, active,
     pa_bull, pa_bear, pa_bull_partial, pa_bear_partial,
@@ -1642,8 +1849,8 @@ async function fetchIntraCandles(pairKey) {
   const apiKey = keyMap[pairKey] || TD_KEY;
   try {
     const [r1h, r30m, r15m] = await Promise.all([
-      fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=1h&outputsize=100&apikey=${apiKey}`),
-      fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=30min&outputsize=100&apikey=${apiKey}`),
+      fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=1h&outputsize=300&apikey=${apiKey}`),
+      fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=30min&outputsize=200&apikey=${apiKey}`),
       fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=15min&outputsize=150&apikey=${apiKey}`),
     ]);
     const [d1h, d30m, d15m] = await Promise.all([r1h.json(), r30m.json(), r15m.json()]);
@@ -1961,6 +2168,13 @@ EMA50: ${t.ema50_4h || 'N/A'}
 Support: ${t.support4h} | Resistance: ${t.resistance4h}
 -> ${t.trend4h===t.trendDaily?'✅ 4H aligned with Daily':'⚠️ 4H conflicts with Daily - be careful'}
 
+SR CHANNELS (TradingView method — pivot clusters):
+Resistances: ${t.srResistances.length ? t.srResistances.map(z => `${z.lo}-${z.hi}(s:${z.strength})`).join(' | ') : 'none'}
+Supports:    ${t.srSupports.length ? t.srSupports.map(z => `${z.lo}-${z.hi}(s:${z.strength})`).join(' | ') : 'none'}
+${t.nearSRZone ? `⚠️ Price INSIDE SR zone ${t.srInside?.[0]?.lo}-${t.srInside?.[0]?.hi} — caution, wait for breakout or rejection` : ''}
+${t.closestRes ? `Next resistance: ${t.closestRes.lo}-${t.closestRes.hi}` : ''}
+${t.closestSup ? `Next support: ${t.closestSup.lo}-${t.closestSup.hi}` : ''}
+
 1H CONFIRMATION:
 Structure: ${t.struct1h} | EMA20: ${t.ema20 || 'N/A'} | EMA50: ${t.ema50 || 'N/A'} | EMA200: ${t.ema200 || 'N/A'}
 RSI(14): ${t.rsi || 'N/A'} ${parseFloat(t.rsi) < 35 ? '- OVERSOLD' : parseFloat(t.rsi) > 65 ? '- OVERBOUGHT' : ''}
@@ -1974,6 +2188,9 @@ EMA cross bull: ${t.emaCross15m_bull} | bear: ${t.emaCross15m_bear}
 Entry zone: ${t.sr15mLow} -> ${t.sr15mHigh}
 
 LIQUIDITY: PDH=${t.prevDayHigh||'N/A'} PDL=${t.prevDayLow||'N/A'} | NearPDH=${t.nearPDH} NearPDL=${t.nearPDL} | LiqBull=${t.liqBull} LiqBear=${t.liqBear}
+ICT LIQUIDITY (LuxAlgo):
+  Buyside  (buy stops above): ${t.buysideLiq  ? t.buysideLiq.level +' ('+t.buysideLiq.count+' equal highs)' : 'none'} ${t.nearBuyside  ? '⚡ Price near buyside liq!' : ''}
+  Sellside (sell stops below): ${t.sellsideLiq ? t.sellsideLiq.level+' ('+t.sellsideLiq.count+' equal lows)'  : 'none'} ${t.nearSellside ? '⚡ Price near sellside liq!' : ''}
 
 S/R levels: ${t.structuredLevels ? `SL=${t.structuredLevels.sl} TP1=${t.structuredLevels.tp1} TP2=${t.structuredLevels.tp2} TP3=${t.structuredLevels.tp3} (next: ${t.structuredLevels.nextLevels?.join(' → ')||'N/A'})` : 'calculate from structure'}
 
