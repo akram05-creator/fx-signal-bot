@@ -1939,20 +1939,26 @@ async function fetchCalendar() {
         method: 'DELETE',
         headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
       });
-      // Insert new events
-      if(calEvents.length){
+      // Insert today's events (all currencies for Vercel display)
+      const allTodayEvents = data.filter(e => {
+        const eDate = new Date(e.date);
+        const eDateISO = eDate.toISOString().split('T')[0];
+        const eDateEST = eDate.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric', timeZone:'America/New_York'});
+        return eDateISO === todayISO || eDateEST === todayEST;
+      });
+      if(allTodayEvents.length){
         await fetch(`${SB_URL}/rest/v1/calendar`, {
           method: 'POST',
           headers: { 'Content-Type':'application/json','apikey':SB_KEY,'Authorization':`Bearer ${SB_KEY}`,'Prefer':'return=minimal' },
-          body: JSON.stringify(calEvents.map(e => ({
+          body: JSON.stringify(allTodayEvents.map(e => ({
             event_time: new Date(e.date).toISOString(),
-            currency: e.currency,
+            currency: e.country, // field = country in faireconomy API
             title: e.title,
             impact: e.impact,
             updated_at: new Date().toISOString()
           })))
         });
-        log(`[OK] Calendar saved to DB: ${calEvents.length} events`);
+        log(`[OK] Calendar saved to DB: ${allTodayEvents.length} events | Bot tracking: ${calEvents.length} (USD/EUR/GBP/JPY)`);
       }
     }catch(dbErr){ log(`[WARN] Calendar DB save: ${dbErr.message}`); }
 
