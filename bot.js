@@ -1168,16 +1168,24 @@ function computeTechnicals(key) {
   const closes15m = m15.map(x => x.c);
   const dec = PAIRS.find(p => p.key === key).dec;
 
-  // Daily bias (trend long terme - l muhim)
+  // Daily bias — use RECENT 20 candles for medium-term trend (more relevant)
   const daily = c.daily || [];
   const closesDaily = daily.map(x => x.c);
+  // Recent trend (last 20 days) — most important
+  const recentDaily = daily.slice(-20);
+  const closesRecentDaily = recentDaily.map(x => x.c);
+  const ema10_recent = calcEMA(closesRecentDaily, Math.min(10, closesRecentDaily.length));
+  const ema20_recent = calcEMA(closesRecentDaily, Math.min(20, closesRecentDaily.length));
+  const structRecentDaily = getSwingStructure(recentDaily);
+  const lastCloseDaily = closesDaily[closesDaily.length - 1] || price;
+  // trendDaily = recent 20 days trend (not 427 days!)
+  const trendDaily = (ema10_recent && ema20_recent && ema10_recent < ema20_recent && structRecentDaily === 'baissier') ? 'baissier'
+                   : (ema10_recent && ema20_recent && ema10_recent > ema20_recent && structRecentDaily === 'haussier') ? 'haussier'
+                   : structRecentDaily || 'neutre';
+  // Long term trend (info only — for context)
   const ema20_daily = calcEMA(closesDaily, Math.min(20, closesDaily.length));
   const ema50_daily = calcEMA(closesDaily, Math.min(50, closesDaily.length));
   const structDaily = getSwingStructure(daily.slice(-30));
-  const lastCloseDaily = closesDaily[closesDaily.length - 1] || price;
-  const trendDaily = (ema50_daily && lastCloseDaily > ema50_daily && structDaily === 'haussier') ? 'haussier'
-                   : (ema50_daily && lastCloseDaily < ema50_daily && structDaily === 'baissier') ? 'baissier'
-                   : structDaily || 'neutre';
 
   // Daily/4H bias
   const ema50_4h   = calcEMA(closes4h, Math.min(50, closes4h.length));
@@ -2142,20 +2150,10 @@ Reply ONLY in raw JSON no markdown:
       return;
     }
 
-    // [BLOCK] CONTRE TREND — signal doit aller AVEC Daily/4H trend
-    // Exception: si Daily neutre → on accepte les 2 directions
-    if (t.trendDaily !== 'neutre') {
-      const signalDir = isBuy ? 'haussier' : 'baissier';
-      if (signalDir !== t.trendDaily) {
-        log(`[BLOCK] Contre trend [${best.label}]: AI=${r.signal} mais Daily=${t.trendDaily} - signal annulé`);
-        return;
-      }
-    } else if (t.trend4h !== 'neutre') {
-      const signalDir = isBuy ? 'haussier' : 'baissier';
-      if (signalDir !== t.trend4h) {
-        log(`[BLOCK] Contre trend [${best.label}]: AI=${r.signal} mais 4H=${t.trend4h} - signal annulé`);
-        return;
-      }
+    // Trend alignment — logged only (AI already has rules in prompt)
+    const signalDir = isBuy ? 'haussier' : 'baissier';
+    if (t.trendDaily !== 'neutre' && signalDir !== t.trendDaily) {
+      log(`[WARN] Contre trend [${best.label}]: AI=${r.signal} Daily=${t.trendDaily} — AI accepted despite trend`);
     }
 
     // [BLOCK] 2nd trade needs AI confidence >= 70
