@@ -1923,12 +1923,10 @@ async function fetchCalendar() {
       return diff > -15 * 60000 && diff < 30 * 60000;
     });
     log(`[CAL] Calendar: ${calEvents.length} events today - blocked: ${calBlocked}`);
-    if (data.length > 0) {
-      // Debug: show actual field names
-      const first = data[0];
-      const fields = Object.keys(first).join(', ');
-      log(`[CAL] Debug - Fields: ${fields}`);
-      log(`[CAL] Debug - First event: ${JSON.stringify(first)}`);
+    // Log high impact events for visibility
+    const highEvents = calEvents.filter(e => e.impact === 'High');
+    if (highEvents.length > 0) {
+      log(`[CAL] HIGH IMPACT today: ${highEvents.map(e => e.country+' '+e.title).join(' | ')}`);
     }
 
     // Save f Supabase bach Vercel y9ra (mashi bloqué f browser) [OK]
