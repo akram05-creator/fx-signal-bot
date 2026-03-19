@@ -1907,13 +1907,14 @@ async function fetchCalendar() {
     const todayISO8 = new Date().toISOString().split('T')[0]; // YYYY-MM-DD UTC
     
     calEvents = data.filter(e => {
-      if (!['USD', 'EUR', 'GBP', 'JPY'].includes(e.currency)) return false;
-      // Try multiple date matching methods
+      if (!['USD', 'EUR', 'GBP', 'JPY'].includes(e.country)) return false;
+      // Parse date - faireconomy uses EST timezone (-04:00 or -05:00)
       const eDate = new Date(e.date);
-      const eDateUTC = eDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+      // Convert to UTC date string
+      const eDateISO = eDate.toISOString().split('T')[0]; // UTC date
+      // Also check EST date (event might be today EST but yesterday UTC)
       const eDateEST = eDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
-      const eDateISO = eDate.toISOString().split('T')[0];
-      return eDateUTC === todayUTC || eDateEST === todayEST || eDateISO === todayISO8;
+      return eDateISO === todayISO8 || eDateEST === todayEST;
     });
     const nowMs = Date.now();
     calBlocked = calEvents.some(e => {
