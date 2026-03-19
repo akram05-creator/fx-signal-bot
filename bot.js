@@ -14,10 +14,30 @@ const POLY_KEY = process.env.POLY_KEY || 'Vxe1pa2pDsqR2wt5XguyxYOH68DwTiKi';
 const GROQ_KEY  = process.env.GROQ_KEY  || '';
 const GROQ_KEY2 = process.env.GROQ_KEY2 || ''; // second key for rotation
 let groqKeyIndex = 0; // rotate between keys
+let groqKey1Limited = false; // track if key1 is rate limited
+let groqKey1ResetTime = 0;   // when key1 resets
 const TG_TOKEN = process.env.TG_TOKEN || '8427595283:AAFaoATV4Cq-45Fq_eruMLRFaJsOrCt6Ceo';
 const TG_CHAT  = process.env.TG_CHAT  || '-1003612566723';
 const SB_URL   = process.env.SUPABASE_URL || 'https://ugbowhydxxkpsamjxxai.supabase.co';
 const SB_KEY   = process.env.SUPABASE_KEY || 'sb_publishable_I1wxgYYVPxo9PXhmBxpG5A_dYR2nsi9';
+
+// Smart Groq key selector
+function getGroqKey() {
+  const now = Date.now();
+  // If key1 is rate limited and reset time not passed → use key2
+  if (groqKey1Limited && now < groqKey1ResetTime && GROQ_KEY2) {
+    return GROQ_KEY2;
+  }
+  // Reset flag if time passed
+  if (groqKey1Limited && now >= groqKey1ResetTime) {
+    groqKey1Limited = false;
+  }
+  // Normal rotation: alternate between key1 and key2
+  if (GROQ_KEY2) {
+    return groqKeyIndex++ % 2 === 0 ? GROQ_KEY : GROQ_KEY2;
+  }
+  return GROQ_KEY;
+}
 
 // --- Supabase DB ---------------------------------------------
 async function dbInsert(table, data){
@@ -364,7 +384,7 @@ YOUR DECISION - reply ONLY in raw JSON:
       try{
         const res = await fetch('https://api.groq.com/openai/v1/chat/completions',{
           method:'POST',
-          headers:{'Content-Type':'application/json','Authorization':`Bearer ${GROQ_KEY}`},
+          headers:{'Content-Type':'application/json','Authorization':`Bearer ${getGroqKey()}`},
           body: JSON.stringify({ model:'llama-3.3-70b-versatile', max_tokens:300, temperature:0.2,
             messages:[{role:'user',content:prompt}] })
         });
@@ -2427,7 +2447,7 @@ Reply ONLY in raw JSON no markdown:
   try {
     const res  = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKeyIndex++ % 2 === 0 ? GROQ_KEY : (GROQ_KEY2 || GROQ_KEY)}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getGroqKey()}` },
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
@@ -2438,7 +2458,18 @@ Reply ONLY in raw JSON no markdown:
     });
     const data = await res.json();
     // Log Groq errors (rate limit, quota, etc.)
-    if (data.error) { log(`[WARN] Groq API error: ${data.error.message}`); return; }
+    if (data.error) {
+      log(`[WARN] Groq API error: ${data.error.message}`);
+      // If rate limit, mark key1 as limited and calculate reset time
+      if (data.error.message && data.error.message.includes('Rate limit')) {
+        const match = data.error.message.match(/try again in ([\d.]+)m/);
+        const mins = match ? parseFloat(match[1]) : 30;
+        groqKey1Limited = true;
+        groqKey1ResetTime = Date.now() + mins * 60 * 1000;
+        log(`[WARN] Key1 rate limited for ${mins}min → switching to Key2`);
+      }
+      return;
+    }
     if (!data.choices?.length) { log(`[WARN] Groq no choices: ${JSON.stringify(data).substring(0,150)}`); return; }
     const raw  = data.choices?.[0]?.message?.content || '';
     const clean = raw.replace(/```json|```/g, '').trim();
