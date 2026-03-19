@@ -1895,10 +1895,19 @@ async function fetchCalendar() {
     const res  = await fetch(url);
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data = await res.json();
-    const todayStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    // ForexFactory dates are in EST (America/New_York) — compare both UTC and EST
+    const todayUTC = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+    const todayEST = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
+    const todayISO8 = new Date().toISOString().split('T')[0]; // YYYY-MM-DD UTC
+    
     calEvents = data.filter(e => {
-      const eDate = new Date(e.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      return eDate === todayStr && ['USD', 'EUR', 'GBP', 'JPY'].includes(e.currency);
+      if (!['USD', 'EUR', 'GBP', 'JPY'].includes(e.currency)) return false;
+      // Try multiple date matching methods
+      const eDate = new Date(e.date);
+      const eDateUTC = eDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+      const eDateEST = eDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
+      const eDateISO = eDate.toISOString().split('T')[0];
+      return eDateUTC === todayUTC || eDateEST === todayEST || eDateISO === todayISO8;
     });
     const nowMs = Date.now();
     calBlocked = calEvents.some(e => {
