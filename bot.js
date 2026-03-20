@@ -987,39 +987,89 @@ function findNextSRLevels(candles1h, candles4h, price, isBuy) {
 
 function calcStructuredSLTP(candles1h, candles15m, candles4h, price, isBuy, dec, atrValue=null) {
   const pip    = dec===2 ? 0.10 : dec===3 ? 0.01 : 0.0001;
-  const minSL  = pip * (dec===2 ? 80 : 8);
-  const c15    = candles15m.slice(-20);
-  const swH15  = c15.length ? Math.max(...c15.map(x=>x.h)) : price;
-  const swL15  = c15.length ? Math.min(...c15.map(x=>x.l)) : price;
+  
+  // ============================================================
+  // SL = nearest real S/R structure level beyond entry
+  // Logic: find SR zones from SR Channels + swing levels
+  // ============================================================
+  
+  // Get SR Channels zones
+  const srZones = findSRChannels(candles1h, price, dec, 10, 8, 200);
+  
+  // Max SL distance (intraday protection)
+  const maxSLDist = dec === 2 ? 50.0 : dec === 3 ? 0.30 : 0.0030;
+  const minSLDist = dec === 2 ? 8.0  : dec === 3 ? 0.05 : 0.0005;
 
-  // ATR-aware SL: ila ATR kbir → SL ytb3ed (buffer = 1.5× ATR)
-  const atrBuffer = atrValue ? atrValue * 1.5 : pip * 2;
-  const sl     = isBuy
-    ? Math.min(swL15 - atrBuffer, price - minSL)
-    : Math.max(swH15 + atrBuffer, price + minSL);
-  const slDist = Math.abs(price - sl);
-  const nextLevels = findNextSRLevels(candles1h, candles4h, price, isBuy);
-
-  let tp1=null, tp1RR=0;
-  for(const lvl of nextLevels){
-    const rr = Math.abs(lvl.level-price)/slDist;
-    if(rr>=1.5 && rr<=3.5){ tp1=lvl.level; tp1RR=rr; break; }
+  // Find SL level: nearest SR zone on wrong side of trade
+  let sl = null;
+  if (isBuy) {
+    // BUY: SL = nearest resistance zone BELOW entry (or last swing low)
+    const supportZones = srZones.filter(z => z.hi < price).sort((a,b) => b.hi - a.hi);
+    if (supportZones.length > 0) {
+      // Place SL just below the nearest support zone
+      sl = parseFloat((supportZones[0].lo - pip * 2).toFixed(dec));
+    }
+  } else {
+    // SELL: SL = nearest resistance zone ABOVE entry (or last swing high)
+    const resistanceZones = srZones.filter(z => z.lo > price).sort((a,b) => a.lo - b.lo);
+    if (resistanceZones.length > 0) {
+      // Place SL just above the nearest resistance zone
+      sl = parseFloat((resistanceZones[0].hi + pip * 2).toFixed(dec));
+    }
   }
-  if(!tp1){ tp1 = isBuy ? price+slDist*2 : price-slDist*2; tp1RR=2; }
 
-  let tp2=null;
-  for(const lvl of nextLevels){
-    const rr = Math.abs(lvl.level-price)/slDist;
-    if(rr > tp1RR+0.3 && rr<=5){ tp2=lvl.level; break; }
+  // Fallback: use 15m swing if no SR zone found
+  if (!sl) {
+    const c15   = candles15m.slice(-20);
+    const swH15 = c15.length ? Math.max(...c15.map(x=>x.h)) : price;
+    const swL15 = c15.length ? Math.min(...c15.map(x=>x.l)) : price;
+    sl = isBuy ? swL15 - pip * 2 : swH15 + pip * 2;
   }
-  if(!tp2) tp2 = isBuy ? price+slDist*3 : price-slDist*3;
 
-  let tp3=null;
-  for(const lvl of nextLevels){
-    const rr = Math.abs(lvl.level-price)/slDist;
-    if(rr > Math.abs(tp2-price)/slDist+0.3 && rr<=6){ tp3=lvl.level; break; }
+  // Cap SL distance
+  let slDist = Math.abs(price - sl);
+  if (slDist > maxSLDist) {
+    sl = isBuy ? price - maxSLDist : price + maxSLDist;
+    slDist = maxSLDist;
   }
-  if(!tp3) tp3 = isBuy ? price+slDist*4 : price-slDist*4;
+  if (slDist < minSLDist) {
+    sl = isBuy ? price - minSLDist : price + minSLDist;
+    slDist = minSLDist;
+  }
+  sl = parseFloat(sl.toFixed(dec));
+  slDist = Math.abs(price - sl);
+
+  // ============================================================
+  // TP = real S/R levels in trade direction
+  // ============================================================
+  const targetZones = srZones.filter(z => 
+    isBuy ? z.lo > price : z.hi < price
+  ).sort((a,b) => isBuy ? a.lo - b.lo : b.hi - a.hi);
+
+  // TP1: nearest zone with RR >= 1.5
+  let tp1 = null, tp1RR = 0;
+  for (const zone of targetZones) {
+    const level = isBuy ? zone.lo : zone.hi;
+    const rr = Math.abs(level - price) / slDist;
+    if (rr >= 1.5) { tp1 = level; tp1RR = rr; break; }
+  }
+  if (!tp1) { tp1 = isBuy ? price + slDist * 2 : price - slDist * 2; tp1RR = 2; }
+
+  // TP2: next zone after TP1
+  let tp2 = null;
+  for (const zone of targetZones) {
+    const level = isBuy ? zone.lo : zone.hi;
+    if (isBuy ? level > tp1 : level < tp1) { tp2 = level; break; }
+  }
+  if (!tp2) { tp2 = isBuy ? price + slDist * 3 : price - slDist * 3; }
+
+  // TP3: third zone (major target)
+  let tp3 = null;
+  for (const zone of targetZones) {
+    const level = isBuy ? zone.lo : zone.hi;
+    if (isBuy ? level > tp2 : level < tp2) { tp3 = level; break; }
+  }
+  if (!tp3) { tp3 = isBuy ? price + slDist * 4 : price - slDist * 4; }
 
   return {
     sl:  parseFloat(sl.toFixed(dec)),
@@ -1028,7 +1078,7 @@ function calcStructuredSLTP(candles1h, candles15m, candles4h, price, isBuy, dec,
     tp3: parseFloat(tp3.toFixed(dec)),
     slDist: parseFloat(slDist.toFixed(dec+1)),
     tp1RR:  parseFloat(tp1RR.toFixed(2)),
-    nextLevels: nextLevels.slice(0,3).map(l=>l.level.toFixed(dec))
+    nextLevels: targetZones.slice(0,3).map(z => (isBuy ? z.lo : z.hi).toFixed(dec))
   };
 }
 
@@ -2095,9 +2145,9 @@ ${probLabel}
 -----------------
 📌 <b>Entry:</b>  <code>${parseFloat(price).toFixed(dec)}</code>
 🛑 <b>SL:</b>     <code>${fmt(r.sl)}</code>
-🎯 <b>TP1:</b>    <code>${fmt(r.tp1)}</code>  <i>(40% - 30-45min)</i>
-🎯 <b>TP2:</b>    <code>${fmt(r.tp2)}</code>  <i>(35% - 1-2h)</i>
-🎯 <b>TP3:</b>    <code>${fmt(r.tp3)}</code>  <i>(25% - 2-4h)</i>
+🎯 <b>TP1:</b>    <code>${fmt(r.tp1)}</code>  <i>(40% - 1-2h)</i>
+🎯 <b>TP2:</b>    <code>${fmt(r.tp2)}</code>  <i>(35% - 2-4h)</i>
+🎯 <b>TP3:</b>    <code>${fmt(r.tp3)}</code>  <i>(25% - 4-8h)</i>
 -----------------
 📊 <b>Score:</b> ${score}/100 | <b>RR:</b> ${rr} | <b>Conf:</b> ${conf}%
 ${lotCalc}
@@ -2155,30 +2205,30 @@ async function runScan() {
     return;
   }
 
-  // Filter candidates: direction claire seulement (score >= 40 minimum)
+  // Scan ALL pairs with direction — AI decides for each
   const candidates = analyses.filter(p => {
     const dir = p.tech.finalDir;
     const hasDir = dir.includes('haussier') || dir.includes('baissier');
-    return hasDir && p.tech.totalScore >= 40;
+    const alreadyActive = allActiveTrades?.some(tr => tr.pair === p.label);
+    return hasDir && p.tech.totalScore >= 40 && !alreadyActive;
   });
 
-  if (!candidates.length) { log('-> WAIT: no valid candidates (no direction or score < 40)'); return; }
+  if (!candidates.length) { log('-> WAIT: no valid candidates'); return; }
 
-  // Pick best candidate not already in active trade
-  let best = null;
-  for (const cand of candidates) {
-    const alreadyActive = allActiveTrades?.some(tr => tr.pair === cand.label);
-    if (!alreadyActive) { best = cand; break; }
-  }
-  if (!best) { log('-> All valid pairs already have active trades'); return; }
+  log(`[SCAN] Scanning ${candidates.length} pairs: ${candidates.map(p => p.label+'('+p.tech.totalScore+')').join(' | ')} (active: ${activeCount}/2)`);
+
+  // Scan each candidate — AI decides for each
+  for (const best of candidates) {
+    // Skip if max trades reached
+    const currentActive = await dbSelect('trades', 'status=eq.active&limit=10');
+    if ((currentActive?.length || 0) >= 2) {
+      log('-> Max 2 trades reached - stopping scan');
+      break;
+    }
 
   const t = best.tech;
-  log(`[SCAN] Scanning ${best.label} - score ${t.totalScore}/100 - ${t.finalDir} (active: ${activeCount}/2)`);
 
-  // score < 40 = too weak even for AI
-  if (t.totalScore < 40) { log(`-> WAIT: score ${t.totalScore} too low`); return; }
-
-  // AI THROTTLE - call AI only when score changes OR every 5min
+  // AI THROTTLE per pair - 15min
   const pairKey2 = best.key;
   const now_ai = Date.now();
   const lastCall = lastAICall[pairKey2] || 0;
@@ -2187,10 +2237,9 @@ async function runScan() {
   const timeSinceCall = now_ai - lastCall;
   const MIN_INTERVAL_MS = 15 * 60 * 1000; // 15 min = 1 candle
 
-  // Call AI if: score changed (INSTANT) OR 5min passed
   if (!scoreChanged && timeSinceCall < MIN_INTERVAL_MS) {
-    log(`-> AI throttled (score=${t.totalScore} unchanged, ${Math.round(timeSinceCall/1000)}s ago)`);
-    return;
+    log(`-> AI throttled ${best.label} (score=${t.totalScore} unchanged, ${Math.round(timeSinceCall/1000)}s ago)`);
+    continue;
   }
   lastAICall[pairKey2]  = now_ai;
   lastAIScore[pairKey2] = t.totalScore;
@@ -2567,15 +2616,16 @@ Reply ONLY in raw JSON no markdown:
     const twoHours = 2 * 60 * 60 * 1000;
     if (last && last.sig === sigKey && (now2 - last.time) < twoHours) {
       log(`-> Same signal (${sigKey}) sent ${Math.round((now2-last.time)/60000)}min ago - skip`);
-      return;
+      continue;
     }
     lastSig[best.key] = { sig: sigKey, time: now2 };
     const tgMsgId = await sendTelegram(sigKey, best.label, t.price, best.dec, r.confidence, t.totalScore, r, probLabel, t);
     await saveSignalToDB(sigKey, best.label, t.price, best.dec, r.confidence, t.totalScore, r, session, tgMsgId);
 
   } catch (e) {
-    log(`[WARN] AI scan error: ${e.message}`);
+    log(`[WARN] AI scan error [${best.label}]: ${e.message}`);
   }
+  } // end for loop (candidates)
 }
 
 // --- Daily Briefing -----------------------------------------
