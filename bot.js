@@ -1935,10 +1935,16 @@ async function fetchIntraCandles(pairKey) {
       v: parseFloat(v.volume) || 0,
     })).reverse();
     if (!candles[pairKey]) candles[pairKey] = {};
-    if (d1h?.values?.length)  candles[pairKey].h1  = parse(d1h);
-    if (d30m?.values?.length) candles[pairKey].m30 = parse(d30m);
-    if (d15m?.values?.length) candles[pairKey].m15 = parse(d15m);
-    log(`[OK] Intra ${pairKey}: 1H=${candles[pairKey].h1?.length} 30m=${candles[pairKey].m30?.length} 15m=${candles[pairKey].m15?.length}`);
+    // Only update if data valid — keep old candles if fetch failed
+    let updated = [];
+    if (d1h?.values?.length)  { candles[pairKey].h1  = parse(d1h);  updated.push('1H='+candles[pairKey].h1.length); }
+    else if (d1h?.status === 'error') log(`[WARN] TD ${pairKey} 1H: ${d1h.message}`);
+    if (d30m?.values?.length) { candles[pairKey].m30 = parse(d30m); updated.push('30m='+candles[pairKey].m30.length); }
+    if (d15m?.values?.length) { candles[pairKey].m15 = parse(d15m); updated.push('15m='+candles[pairKey].m15.length); }
+    const h1len  = candles[pairKey].h1?.length  || 'cached';
+    const m30len = candles[pairKey].m30?.length || 'cached';
+    const m15len = candles[pairKey].m15?.length || 'cached';
+    log(`[OK] Intra ${pairKey}: 1H=${h1len} 30m=${m30len} 15m=${m15len}${updated.length < 3 ? ' (partial update)' : ''}`);
   } catch (e) {
     log(`[WARN] Intra ${pairKey}: ${e.message}`);
   }
