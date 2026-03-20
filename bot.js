@@ -562,7 +562,7 @@ const POLY_MAP = { EURUSD:'C:EURUSD',GBPUSD:'C:GBPUSD',XAUUSD:'C:XAUUSD',USDJPY:
 
 const PRICE_SECS = 60;   // fetch prices every 60s (active hours only)
 const SCAN_SECS  = 60;   // AI scan every 60s
-const CANDLE_MS  = 2 * 60 * 60 * 1000; // refresh candles every 2h
+const CANDLE_MS  = 4 * 60 * 60 * 1000; // refresh candles every 4h (save API credits)
 
 // --- State --------------------------------------------------
 const prices     = {};
@@ -1813,8 +1813,8 @@ function computeTechnicals(key) {
 async function fetchDXY() {
   try {
     const [rPrice, rCandles] = await Promise.all([
-      fetch(`https://api.twelvedata.com/price?symbol=DX-Y.NYB&apikey=${TD_KEY3}`),
-      fetch(`https://api.twelvedata.com/time_series?symbol=DX-Y.NYB&interval=1h&outputsize=20&apikey=${TD_KEY3}`)
+      fetch(`https://api.twelvedata.com/price?symbol=DX-Y.NYB&apikey=${TD_KEY}`),
+      fetch(`https://api.twelvedata.com/time_series?symbol=DX-Y.NYB&interval=1h&outputsize=20&apikey=${TD_KEY}`)
     ]);
     const [dPrice, dCandles] = await Promise.all([rPrice.json(), rCandles.json()]);
     
@@ -1849,10 +1849,10 @@ async function fetchPrices() {
   if (!isActiveSession() && !hasActiveTrades) return;
   try {
     const [r1, r2, r3, r4] = await Promise.all([
-      fetch(`https://api.twelvedata.com/price?symbol=EUR%2FUSD&apikey=${TD_KEY2}`),
-      fetch(`https://api.twelvedata.com/price?symbol=GBP%2FUSD&apikey=${TD_KEY3}`),
-      fetch(`https://api.twelvedata.com/price?symbol=XAU%2FUSD&apikey=${TD_KEY4}`),
-      fetch(`https://api.twelvedata.com/price?symbol=USD%2FJPY&apikey=${TD_KEY2}`),
+      fetch(`https://api.twelvedata.com/price?symbol=EUR%2FUSD&apikey=${TD_KEY}`),
+      fetch(`https://api.twelvedata.com/price?symbol=GBP%2FUSD&apikey=${TD_KEY2}`),
+      fetch(`https://api.twelvedata.com/price?symbol=XAU%2FUSD&apikey=${TD_KEY3}`),
+      fetch(`https://api.twelvedata.com/price?symbol=USD%2FJPY&apikey=${TD_KEY4}`),
     ]);
     const [d1, d2, d3, d4] = await Promise.all([r1.json(), r2.json(), r3.json(), r4.json()]);
     const map = { 'EUR/USD': d1, 'GBP/USD': d2, 'XAU/USD': d3, 'USD/JPY': d4 };
@@ -1921,11 +1921,11 @@ async function fetchDailyCandles(pairKey) {
 async function fetchIntraCandles(pairKey) {
   const sym = PAIRS.find(p => p.key === pairKey)?.label;
   if (!sym) return;
-  const keyMap = { EURUSD: TD_KEY2, GBPUSD: TD_KEY3, XAUUSD: TD_KEY4, USDJPY: TD_KEY2 };
+  const keyMap = { EURUSD: TD_KEY, GBPUSD: TD_KEY2, XAUUSD: TD_KEY3, USDJPY: TD_KEY4 };
   const apiKey = keyMap[pairKey] || TD_KEY;
   try {
     const [r1h, r30m, r15m] = await Promise.all([
-      fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=1h&outputsize=300&apikey=${apiKey}`),
+      fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=1h&outputsize=200&apikey=${apiKey}`),
       fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=30min&outputsize=200&apikey=${apiKey}`),
       fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(sym)}&interval=15min&outputsize=150&apikey=${apiKey}`),
     ]);
