@@ -16,6 +16,11 @@ const GROQ_KEY2 = process.env.GROQ_KEY2 || ''; // second key for rotation
 let groqKeyIndex = 0; // rotate between keys
 let groqKey1Limited = false; // track if key1 is rate limited
 let groqKey1ResetTime = 0;   // when key1 resets
+let tdKeyIndex = 0;
+const TD_KEYS = [TD_KEY, TD_KEY2, TD_KEY3, TD_KEY4];
+function getTDKey() {
+  return TD_KEYS[tdKeyIndex++ % TD_KEYS.length];
+}
 const TG_TOKEN = process.env.TG_TOKEN || '8427595283:AAFaoATV4Cq-45Fq_eruMLRFaJsOrCt6Ceo';
 const TG_CHAT  = process.env.TG_CHAT  || '-1003612566723';
 const SB_URL   = process.env.SUPABASE_URL || 'https://ugbowhydxxkpsamjxxai.supabase.co';
@@ -1906,17 +1911,12 @@ async function fetchPrices() {
   dxyRefreshCount = (dxyRefreshCount || 0) + 1;
   if (dxyRefreshCount % 30 === 0) await fetchDXY();
 
-  // Always fetch if active trade exists (TP/SL tracking 24/7)
-  // Outside session + no active trades -> skip
-  const hasTrades = await dbSelect('trades', 'status=eq.active&limit=1');
-  const hasActiveTrades = hasTrades && hasTrades.length > 0;
-  if (!isActiveSession() && !hasActiveTrades) return;
   try {
     const [r1, r2, r3, r4] = await Promise.all([
-      fetch(`https://api.twelvedata.com/price?symbol=EUR%2FUSD&apikey=${TD_KEY}`),
-      fetch(`https://api.twelvedata.com/price?symbol=GBP%2FUSD&apikey=${TD_KEY2}`),
-      fetch(`https://api.twelvedata.com/price?symbol=XAU%2FUSD&apikey=${TD_KEY3}`),
-      fetch(`https://api.twelvedata.com/price?symbol=USD%2FJPY&apikey=${TD_KEY4}`),
+      fetch(`https://api.twelvedata.com/price?symbol=EUR%2FUSD&apikey=${getTDKey()}`),
+      fetch(`https://api.twelvedata.com/price?symbol=GBP%2FUSD&apikey=${getTDKey()}`),
+      fetch(`https://api.twelvedata.com/price?symbol=XAU%2FUSD&apikey=${getTDKey()}`),
+      fetch(`https://api.twelvedata.com/price?symbol=USD%2FJPY&apikey=${getTDKey()}`),
     ]);
     const [d1, d2, d3, d4] = await Promise.all([r1.json(), r2.json(), r3.json(), r4.json()]);
     const map = { 'EUR/USD': d1, 'GBP/USD': d2, 'XAU/USD': d3, 'USD/JPY': d4 };
@@ -1956,7 +1956,12 @@ async function fetchPrices() {
     await Promise.all(priceUpdates);
     Object.assign(prevPrices, prices);
   } catch(e) {
-    log(`[WARN] fetchPrices error: ${e.message}`);
+    if (e.message?.includes('429') || e.message?.toLowerCase().includes('rate limit')) {
+      tdKeyIndex++;
+      log(`[WARN] fetchPrices rate limit - rotating to TD key ${tdKeyIndex % TD_KEYS.length}`);
+    } else {
+      log(`[WARN] fetchPrices error: ${e.message}`);
+    }
   }
 }
 
@@ -2251,9 +2256,9 @@ ${lotCalc}
 
 // --- AI Scan ------------------------------------------------
 async function runScan() {
-  if (!isActiveSession()) {
-    log('[SLEEP] Outside active hours - skipping scan');
-    return;
+  const withinSignalHours = isActiveSession();
+  if (!withinSignalHours) {
+    log('[INFO] Outside signal hours - scan runs but no signals sent');
   }
   if (calBlocked) {
     log('[BLOCK] HIGH IMPACT news - scan blocked');
@@ -2695,6 +2700,10 @@ Reply ONLY in raw JSON no markdown:
       continue;
     }
     lastSig[best.key] = { sig: sigKey, time: now2 };
+    if (!withinSignalHours) {
+      log(`-> Outside signal hours - ${best.label} ${sigKey} signal detected but not sent`);
+      continue;
+    }
     const tgMsgId = await sendTelegram(sigKey, best.label, t.price, best.dec, r.confidence, t.totalScore, r, probLabel, t);
     await saveSignalToDB(sigKey, best.label, t.price, best.dec, r.confidence, t.totalScore, r, session, tgMsgId);
 
