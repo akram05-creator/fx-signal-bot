@@ -2,7 +2,7 @@
 // FX Signal Pro - 24/7 Trading Bot
 // Railway / Render - Node.js 18+ (built-in fetch)
 // ============================================================
-
+ 
 // Node 18+ has built-in fetch - no dependencies needed!
 
 // --- Config -------------------------------------------------
